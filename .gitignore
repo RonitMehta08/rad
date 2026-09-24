@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Model artifacts (large binary files)
+*.pkl
+*.joblib
+*.h5
+*.onnx
+models/wait_time/*.pkl
+models/noshow/*.pkl
+models/mlflow/
+
+# Data artifacts (generated/processed)
+data/generated/
+data/processed/
+data/raw/
+
+# MLflow
+mlruns/
+mlflow/
+
+# Reports (generated)
+reports/figures/*.png
+reports/figures/*.html
+reports/final_report.md
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
+.env.local
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Parquet files
+*.parquet
+
+# Logs
+*.log
