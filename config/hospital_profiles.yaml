@@ -1,0 +1,132 @@
+# Hospital Profile Configurations — RadQueue AI
+# Owner: P1 (Data & Config Lead)
+# Reference: MASTER_PROMPT §6.3
+
+# Tier 1: Government Teaching Hospital (high volume, 250+ patients/day)
+tier_1:
+  name: "Government Teaching Hospital"
+  tier: "tier_1"
+  daily_patient_volume: 200  # midpoint of 150-250
+  walk_in_ratio: 0.70
+  emergency_ratio: 0.10
+  noshow_rate: 0.20
+
+  resources:
+    xray_rooms: 3
+    ct_scanners: 2
+    mri_machines: 1
+    us_rooms: 2
+    registration_desks: 2
+
+  staff:
+    technologists: 8
+    radiologists: 4
+
+  shifts:
+    morning:
+      start_hour: 8
+      end_hour: 14
+      technologists: 8
+      radiologists: 4
+    afternoon:
+      start_hour: 14
+      end_hour: 20
+      technologists: 6
+      radiologists: 3
+    evening:
+      start_hour: 20
+      end_hour: 23
+      technologists: 3
+      radiologists: 1
+
+# Tier 2: District Hospital (medium volume, 100-150 patients/day)
+tier_2:
+  name: "District Hospital"
+  tier: "tier_2"
+  daily_patient_volume: 125  # midpoint of 100-150
+  walk_in_ratio: 0.60
+  emergency_ratio: 0.10
+  noshow_rate: 0.20
+
+  resources:
+    xray_rooms: 2
+    ct_scanners: 1
+    mri_machines: 1
+    us_rooms: 1
+    registration_desks: 2
+
+  staff:
+    technologists: 5
+    radiologists: 2
+
+  shifts:
+    morning:
+      start_hour: 8
+      end_hour: 14
+      technologists: 5
+      radiologists: 2
+    afternoon:
+      start_hour: 14
+      end_hour: 20
+      technologists: 4
+      radiologists: 2
+    evening:
+      start_hour: 20
+      end_hour: 23
+      technologists: 2
+      radiologists: 1
+
+# Tier 3: Private Multi-Specialty (appointment-heavy, 80-120 patients/day)
+tier_3:
+  name: "Private Multi-Specialty Hospital"
+  tier: "tier_3"
+  daily_patient_volume: 100  # midpoint of 80-120
+  walk_in_ratio: 0.30
+  emergency_ratio: 0.08
+  noshow_rate: 0.15
+
+  resources:
+    xray_rooms: 2
+    ct_scanners: 2
+    mri_machines: 2
+    us_rooms: 2
+    registration_desks: 3
+
+  staff:
+    technologists: 6
+    radiologists: 3
+
+  shifts:
+    morning:
+      start_hour: 8
+      end_hour: 14
+      technologists: 6
+      radiologists: 3
+    afternoon:
+      start_hour: 14
+      end_hour: 20
+      technologists: 5
+      radiologists: 2
+    evening:
+      start_hour: 20
+      end_hour: 23
+      technologists: 3
+      radiologists: 1
+
+# Modality distribution weights (probability of a patient needing each modality)
+modality_distribution:
+  tier_1:
+    xray: 0.45
+    ct: 0.20
+    mri: 0.10
+    ultrasound: 0.25
+  tier_2:
+    xray: 0.50
+    ct: 0.18
+    mri: 0.07
+    ultrasound: 0.25
+  tier_3:
+    xray: 0.35
+    ct: 0.25
+    mri: 0.15
+    ultrasound: 0.25

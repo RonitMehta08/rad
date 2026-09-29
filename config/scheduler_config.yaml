@@ -1,0 +1,85 @@
+# Scheduler Configuration — RadQueue AI
+# Owner: P1 (Data & Config Lead), consumed by P3 (Scheduling Engineer)
+# Reference: MASTER_PROMPT §7.3
+
+# ── Priority Scoring (§7.3 Level 2) ──
+
+priority_weights:
+  emergency: 10
+  urgent: 5
+  routine: 1
+
+fairness_penalty_rate: 0.1  # +0.1 priority per minute over average wait
+starvation_threshold_minutes: 60  # alert when any routine patient waits this long
+
+# ── Day-Ahead MILP Optimizer (§7.3 Level 1) ──
+
+milp:
+  solver: "PULP_CBC_CMD"  # PuLP default CBC solver
+  time_limit_seconds: 120
+  mip_gap: 0.05  # accept solutions within 5% of optimal
+
+  # Time slot granularity
+  slot_duration_minutes: 15
+  planning_horizon_hours: 12  # 8 AM to 8 PM
+
+  # Emergency buffer: reserve this fraction of slots per modality
+  emergency_buffer_fraction: 0.10
+
+  # Objective weights (multi-objective — §7.3)
+  objective_weights:
+    avg_wait_time: 0.40        # alpha
+    max_wait_time: 0.25        # beta
+    wait_time_std_dev: 0.15    # gamma
+    utilization: 0.20          # delta (negative — maximize)
+
+# ── Constraint Limits (§7.3) ──
+
+constraints:
+  max_wait_routine_minutes: 90
+  max_wait_urgent_minutes: 30
+  max_wait_emergency_minutes: 10
+  min_utilization_target: 0.60
+  max_overbooking_fraction: 0.15  # max 15% overbooking on high no-show slots
+
+# ── Rescheduling Triggers (§7.3 Level 3) ──
+
+rescheduling:
+  # Emergency preemption
+  preemption_enabled: true
+  preempt_only_routine: true  # only preempt routine patients for emergencies
+
+  # No-show handling
+  noshow_detection_window_minutes: 15  # wait this long past appointment time
+  noshow_pullforward_enabled: true
+
+  # Equipment failure
+  equipment_failure_redistribution: true
+
+  # Surge detection
+  surge_detection_sigma: 2.0  # arrival rate > mean + 2*std triggers surge
+  surge_overflow_protocol: true
+
+# ── Scheduling Policies for Comparison (§8.2) ──
+
+policies:
+  - name: "fcfs"
+    description: "First Come First Served — baseline"
+  - name: "priority"
+    description: "Emergency > Urgent > Routine"
+  - name: "sjf"
+    description: "Shortest Job First — prioritize fast modalities"
+  - name: "wave"
+    description: "Batch patients in waves every 30 minutes"
+    wave_interval_minutes: 30
+  - name: "radqueue_ai"
+    description: "Multi-objective dynamic dispatch with fairness"
+  - name: "radqueue_noshow"
+    description: "RadQueue + no-show overbooking"
+
+# ── Wave Scheduling Parameters ──
+
+wave_scheduling:
+  interval_minutes: 30
+  max_patients_per_wave: 10
+  modality_balance: true  # try to balance across modalities in each wave

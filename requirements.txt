@@ -43,6 +43,12 @@ holidays>=0.38
 pyyaml>=6.0
 rich>=13.0
 
+# Class Imbalance
+imbalanced-learn>=0.11
+
+# Image Export
+kaleido>=0.2
+
 # Testing
 pytest>=7.4
 pytest-asyncio>=0.21

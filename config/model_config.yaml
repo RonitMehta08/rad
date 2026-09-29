@@ -1,0 +1,148 @@
+# ML Model Configuration — RadQueue AI
+# Owner: P1 (Data & Config Lead), consumed by P2 (ML Engineer)
+# Reference: MASTER_PROMPT §7.1, §7.2, §11
+
+random_seed: 42
+
+# Data split ratios (time-based, NOT random — §7.1 Step 3)
+split:
+  train_ratio: 0.70   # months 1-4
+  val_ratio: 0.15     # month 5
+  test_ratio: 0.15    # month 6
+
+# ── Wait-Time Prediction Models ──
+
+lightgbm:
+  objective: "regression"
+  metric: "mae"
+  device: "gpu"
+  gpu_platform_id: 0
+  gpu_device_id: 0
+  verbosity: -1
+  n_estimators: 5000   # high — will early-stop
+  early_stopping_rounds: 50
+
+  # Optuna search space bounds
+  optuna:
+    n_trials: 100
+    sampler: "tpe"
+    pruner: "median"
+    search_space:
+      num_leaves: [31, 127]
+      learning_rate: [0.01, 0.1]
+      min_child_samples: [20, 100]
+      feature_fraction: [0.6, 0.9]
+      bagging_fraction: [0.6, 0.9]
+      bagging_freq: [1, 7]
+      reg_alpha: [0.0, 10.0]
+      reg_lambda: [0.0, 10.0]
+      max_bin: [63, 255]
+
+xgboost:
+  objective: "reg:squarederror"
+  eval_metric: "mae"
+  tree_method: "gpu_hist"
+  gpu_id: 0
+  n_estimators: 5000
+  early_stopping_rounds: 50
+
+  optuna:
+    n_trials: 100
+    sampler: "tpe"
+    pruner: "median"
+    search_space:
+      max_depth: [3, 10]
+      learning_rate: [0.01, 0.1]
+      min_child_weight: [1, 10]
+      subsample: [0.6, 0.9]
+      colsample_bytree: [0.6, 0.9]
+      reg_alpha: [0.0, 10.0]
+      reg_lambda: [0.0, 10.0]
+      gamma: [0.0, 5.0]
+
+elastic_net:
+  # GridSearchCV parameters
+  alphas: [0.001, 0.01, 0.1, 1.0, 10.0]
+  l1_ratios: [0.1, 0.3, 0.5, 0.7, 0.9]
+  cv_folds: 5
+
+# Stacking ensemble (§7.1 Step 3 — Model 4)
+ensemble:
+  meta_learner: "ridge"
+  meta_learner_alpha: 1.0
+  cv_folds: 5
+  base_models:
+    - "lightgbm"
+    - "xgboost"
+    - "elastic_net"
+
+# ── No-Show Prediction Model (§7.2) ──
+
+noshow:
+  model: "xgboost"
+  objective: "binary:logistic"
+  eval_metric: "auc"
+  tree_method: "gpu_hist"
+  gpu_id: 0
+  n_estimators: 2000
+  early_stopping_rounds: 30
+  use_smote: true
+  use_class_weight: true
+  calibration: "platt"  # Platt scaling via LogisticRegression
+
+  optuna:
+    n_trials: 50
+    sampler: "tpe"
+    search_space:
+      max_depth: [3, 8]
+      learning_rate: [0.01, 0.1]
+      min_child_weight: [1, 10]
+      subsample: [0.6, 0.9]
+      colsample_bytree: [0.6, 0.9]
+      scale_pos_weight: [1.0, 5.0]
+      reg_alpha: [0.0, 5.0]
+      reg_lambda: [0.0, 5.0]
+
+# ── Evaluation Targets (§12) ──
+
+targets:
+  wait_time:
+    mae: 5.0
+    rmse: 8.0
+    r_squared: 0.85
+    mape: 15.0
+    median_ae: 4.0
+    p90_ae: 12.0
+  noshow:
+    auc_roc: 0.82
+    auc_pr: 0.65
+    f1: 0.70
+
+# ── Feature Engineering (§7.1 Step 2) ──
+
+feature_engineering:
+  rolling_windows_minutes: [15, 30, 60]
+  lag_features:
+    - "wait_time_last_served_patient"
+    - "wait_time_last_3_avg"
+    - "queue_length_change_last_15min"
+  cyclical_features:
+    - "hour_of_day"
+    - "day_of_week"
+  interaction_features:
+    - ["current_queue_length_total", "utilization_rate"]
+    - ["modality", "hour_of_day"]
+    - ["visit_type", "current_queue_length_total"]
+  target_encoding_columns:
+    - "modality"
+    - "shift_type"
+    - "exam_complexity"
+  target_encoding_smoothing: 10.0
+
+# ── MLflow Configuration ──
+
+mlflow:
+  tracking_uri: "mlruns"
+  experiment_name: "radqueue-ai"
+  log_models: true
+  log_artifacts: true

@@ -1,0 +1,36 @@
+{
+  "params": {
+    "objective": "binary:logistic",
+    "eval_metric": "auc",
+    "n_estimators": "2000",
+    "random_state": "42",
+    "max_depth": "3",
+    "learning_rate": "0.06820408975583538",
+    "min_child_weight": "2",
+    "subsample": "0.8110910486811733",
+    "colsample_bytree": "0.6630440653430346",
+    "reg_alpha": "3.070234375377283",
+    "reg_lambda": "1.2339143798845602",
+    "scale_pos_weight": "3.815517146676572",
+    "tree_method": "hist"
+  },
+  "metrics": {
+    "auc_roc": 0.9058706773707862,
+    "auc_pr": 0.3019468714351431,
+    "f1": 0.0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "confusion_matrix": [
+      [
+        4593,
+        0
+      ],
+      [
+        189,
+        0
+      ]
+    ],
+    "optimal_threshold": 0.09880826573971928,
+    "threshold_used": 0.5
+  }
+}

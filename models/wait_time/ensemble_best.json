@@ -1,0 +1,22 @@
+{
+  "model_name": "stacking_ensemble",
+  "base_models": [
+    "elastic_net",
+    "lightgbm",
+    "xgboost"
+  ],
+  "meta_learner_alpha": 100.0,
+  "meta_learner_weights": {
+    "elastic_net": 0.007581317813855358,
+    "lightgbm": 0.21003226290937219,
+    "xgboost": 0.7905460286146475
+  },
+  "metrics": {
+    "mae": 6.551581834816561,
+    "rmse": 11.343096871130061,
+    "r_squared": 0.8778513676493462,
+    "mape": 24.764978223736726,
+    "median_ae": 4.047732534508601,
+    "p90_ae": 13.653810868291687
+  }
+}

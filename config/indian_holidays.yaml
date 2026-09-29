@@ -1,0 +1,82 @@
+# Indian Holiday Calendar & Festival Configuration — RadQueue AI
+# Owner: P1 (Data & Config Lead)
+# Reference: MASTER_PROMPT §6.3
+
+# National holidays (all states)
+national_holidays:
+  - name: "Republic Day"
+    month: 1
+    day: 26
+    demand_multiplier: 0.6  # reduced attendance on national holiday
+
+  - name: "Holi"
+    month: 3
+    day: 14  # approximate, varies by year
+    demand_multiplier: 0.5
+
+  - name: "Ram Navami"
+    month: 4
+    day: 17  # approximate
+    demand_multiplier: 0.7
+
+  - name: "Independence Day"
+    month: 8
+    day: 15
+    demand_multiplier: 0.6
+
+  - name: "Ganesh Chaturthi"
+    month: 9
+    day: 7  # approximate
+    demand_multiplier: 0.65
+
+  - name: "Dussehra"
+    month: 10
+    day: 12  # approximate
+    demand_multiplier: 0.55
+
+  - name: "Diwali"
+    month: 10
+    day: 31  # approximate (varies yearly)
+    demand_multiplier: 0.4  # lowest — major holiday week
+
+  - name: "Christmas"
+    month: 12
+    day: 25
+    demand_multiplier: 0.7
+
+  - name: "New Year"
+    month: 1
+    day: 1
+    demand_multiplier: 0.6
+
+  - name: "Mahatma Gandhi Jayanti"
+    month: 10
+    day: 2
+    demand_multiplier: 0.65
+
+# Post-holiday surge: day after major holidays typically sees 1.2-1.4x volume
+post_holiday_surge_multiplier: 1.3
+post_holiday_surge_days: 2  # how many days after the holiday the surge lasts
+
+# Pre-holiday rush: day before a major holiday often has increased volume
+pre_holiday_rush_multiplier: 1.15
+pre_holiday_rush_days: 1
+
+# Monsoon season (June-September) — affects attendance patterns
+monsoon_season:
+  start_month: 6
+  end_month: 9
+  demand_multiplier: 0.85  # slight reduction due to flooding, transport issues
+  emergency_multiplier: 1.15  # more accidents, waterborne illness
+
+# Weekly patterns
+weekly_patterns:
+  monday_multiplier: 1.25   # Mondays are peak in Indian hospitals
+  saturday_multiplier: 0.75  # reduced OPD hours
+  sunday_multiplier: 0.30    # emergency only for most hospitals
+
+# Festival week effects (week surrounding major festivals)
+festival_week_effect:
+  diwali_week_multiplier: 0.60
+  holi_week_multiplier: 0.70
+  christmas_week_multiplier: 0.80
