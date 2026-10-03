@@ -28,18 +28,18 @@ class PatientState(BaseModel):
     registration_time_minutes: float | None = None
     current_wait_minutes: float = 0.0
     scheduled_slot: int | None = None
-    is_preemptable: bool = True
+    is_preemptable: bool | None = None
     status: str = "waiting"  # "waiting", "in_prep", "in_scan", "completed", "noshow", "preempted"
     estimated_duration_minutes: float | None = None
     features: dict[str, Any] = Field(default_factory=dict)
 
     def model_post_init(self, __context: Any) -> None:
-        """Set default estimated duration from modality constants if not provided."""
+        """Set default estimated duration and preemption eligibility if not provided."""
         if self.estimated_duration_minutes is None:
             self.estimated_duration_minutes = SERVICE_TIME_PARAMS[self.modality]["median_minutes"]
-        # Emergencies are non-preemptable by default
-        if self.urgency == UrgencyLevel.EMERGENCY:
-            self.is_preemptable = False
+        if self.is_preemptable is None:
+            # Emergencies are non-preemptable by default, routine/urgent are preemptable
+            self.is_preemptable = (self.urgency != UrgencyLevel.EMERGENCY)
 
 
 class Resource(BaseModel):
@@ -77,5 +77,6 @@ class DepartmentState(BaseModel):
         default_factory=lambda: {m: 0 for m in ModalityType}
     )
     waiting_patients: list[PatientState] = Field(default_factory=list)
+    active_patients: list[PatientState] = Field(default_factory=list)
     resources: list[Resource] = Field(default_factory=list)
     active_assignments: list[Assignment] = Field(default_factory=list)

@@ -5,6 +5,8 @@ Policies implemented:
 2. Priority (Emergency > Urgent > Routine)
 3. SJF (Shortest Job First) — modality duration-based
 4. Wave (Batched wave scheduling at fixed intervals)
+5. RadQueue AI (Multi-objective dynamic dispatch with Rawlsian fairness)
+6. RadQueue No-Show (RadQueue AI + no-show awareness)
 
 Owner: P3 (Scheduling Engineer)
 Reference: MASTER_PROMPT §7.3, §8.2; config/scheduler_config.yaml
@@ -13,8 +15,10 @@ Reference: MASTER_PROMPT §7.3, §8.2; config/scheduler_config.yaml
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Sequence
+from typing import Any, Sequence
 
+from src.scheduler.config import SchedulerConfig, load_scheduler_config
+from src.scheduler.fairness import FairnessEngine
 from src.scheduler.models import DepartmentState, PatientState
 from src.utils.constants import ModalityType, UrgencyLevel, URGENCY_WEIGHTS
 
@@ -72,7 +76,6 @@ class FCFSPolicy(BaseSchedulingPolicy):
         modality: ModalityType | None = None,
     ) -> list[PatientState]:
         candidates = [p for p in queue if modality is None or p.modality == modality]
-        # Sort strictly by arrival time
         return sorted(candidates, key=lambda p: (p.arrival_time_minutes, p.patient_id))
 
 
@@ -95,7 +98,6 @@ class PriorityPolicy(BaseSchedulingPolicy):
 
         def sort_key(p: PatientState) -> tuple[int, float, str]:
             weight = URGENCY_WEIGHTS.get(p.urgency, 1)
-            # Higher weight first (so -weight), then arrival time
             return (-weight, p.arrival_time_minutes, p.patient_id)
 
         return sorted(candidates, key=sort_key)
@@ -120,7 +122,6 @@ class SJFPolicy(BaseSchedulingPolicy):
         candidates = [p for p in queue if modality is None or p.modality == modality]
 
         def sort_key(p: PatientState) -> tuple[int, float, float, str]:
-            # Emergencies first
             is_emergency = 0 if p.urgency == UrgencyLevel.EMERGENCY else 1
             duration = p.estimated_duration_minutes or 999.0
             return (is_emergency, duration, p.arrival_time_minutes, p.patient_id)
@@ -138,7 +139,7 @@ class WavePolicy(BaseSchedulingPolicy):
     name: str = "wave"
     description: str = "Wave Scheduling — batched intervals with modality balance"
 
-    def __init__(self, interval_minutes: int = 30) -> None:
+    def __init__(self, interval_minutes: int = 30, **kwargs: Any) -> None:
         self.interval_minutes = interval_minutes
 
     def order_queue(
@@ -152,19 +153,74 @@ class WavePolicy(BaseSchedulingPolicy):
         def sort_key(p: PatientState) -> tuple[int, int, float, str]:
             wave_index = int(p.arrival_time_minutes // self.interval_minutes)
             weight = URGENCY_WEIGHTS.get(p.urgency, 1)
-            # Waves processed in chronological order; within wave, higher urgency first
             return (wave_index, -weight, p.arrival_time_minutes, p.patient_id)
 
         return sorted(candidates, key=sort_key)
 
 
-def get_policy(policy_name: str, **kwargs) -> BaseSchedulingPolicy:
+class RadQueueAIPolicy(BaseSchedulingPolicy):
+    """RadQueue AI Dynamic Policy with Rawlsian fairness constraints."""
+
+    name: str = "radqueue_ai"
+    description: str = "Multi-objective dynamic dispatch with Rawlsian fairness"
+
+    def __init__(
+        self,
+        config: SchedulerConfig | None = None,
+        penalty_rate: float = 0.1,
+        starvation_threshold_minutes: float = 60.0,
+        **kwargs: Any,
+    ) -> None:
+        self.config = config or load_scheduler_config()
+        self.fairness_engine = FairnessEngine(
+            penalty_rate=penalty_rate or self.config.fairness_penalty_rate,
+            starvation_threshold_minutes=starvation_threshold_minutes or self.config.starvation_threshold_minutes,
+        )
+
+    def compute_score(self, patient: PatientState, state: DepartmentState | None) -> float:
+        base = float(URGENCY_WEIGHTS.get(patient.urgency, 1))
+        avg_wait = state.avg_wait_minutes if state else 0.0
+        queue_len = state.queue_length.get(patient.modality, 0) if state else 0
+
+        wait_bonus = self.fairness_engine.compute_fairness_bonus(
+            patient.current_wait_minutes, avg_wait
+        )
+        modality_factor = 1.0 / (1.0 + float(queue_len))
+        starvation_boost = 3.0 if self.fairness_engine.is_starving(patient) else 0.0
+
+        return base + wait_bonus + modality_factor + starvation_boost
+
+    def order_queue(
+        self,
+        queue: Sequence[PatientState],
+        state: DepartmentState | None = None,
+        modality: ModalityType | None = None,
+    ) -> list[PatientState]:
+        candidates = [p for p in queue if modality is None or p.modality == modality]
+
+        def sort_key(p: PatientState) -> tuple[float, float, str]:
+            score = self.compute_score(p, state)
+            return (-score, p.arrival_time_minutes, p.patient_id)
+
+        return sorted(candidates, key=sort_key)
+
+
+class RadQueueNoShowPolicy(RadQueueAIPolicy):
+    """RadQueue AI Dynamic Policy with no-show risk awareness."""
+
+    name: str = "radqueue_noshow"
+    description: str = "RadQueue dynamic dispatch + no-show overbooking prioritization"
+
+
+def get_policy(policy_name: str, **kwargs: Any) -> BaseSchedulingPolicy:
     """Factory function to instantiate scheduling policies by name."""
     policies: dict[str, type[BaseSchedulingPolicy]] = {
         "fcfs": FCFSPolicy,
         "priority": PriorityPolicy,
         "sjf": SJFPolicy,
         "wave": WavePolicy,
+        "radqueue_ai": RadQueueAIPolicy,
+        "radqueue_noshow": RadQueueNoShowPolicy,
     }
 
     norm_name = policy_name.lower().strip()

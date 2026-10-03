@@ -1,11 +1,11 @@
 """Unit and integration tests for the RadQueue AI Dynamic Scheduling Engine.
 
 Covers:
-- Comparative policies (FCFS, Priority, SJF, Wave)
-- Fairness calculations and anti-starvation rules
+- Comparative policies (FCFS, Priority, SJF, Wave, RadQueue AI, RadQueue No-Show)
+- Fairness calculations, anti-starvation rules, and Gini coefficient
 - Level 1 MILP day-ahead optimizer
 - Level 2 Real-time priority dispatching
-- Level 3 Rescheduling triggers (Emergency preemption, No-show pull-forward, Equipment failure, Surge)
+- Level 3 Rescheduling triggers (Emergency preemption, No-show pull-forward, Controlled overbooking, Equipment failure, Surge)
 - Unified RadiologyScheduler facade
 
 Owner: P3 (Scheduling Engineer)
@@ -132,6 +132,19 @@ def test_wave_policy_batches_by_window():
     assert [p.patient_id for p in ordered] == ["P2", "P1", "P3"]
 
 
+def test_radqueue_ai_policy_orders_with_fairness(sample_patients, department_state):
+    radqueue_policy = get_policy("radqueue_ai")
+    ordered = radqueue_policy.order_queue(sample_patients, department_state)
+    # Emergency should be first, starving routine patient should be second (ahead of non-starving urgent/routine)
+    assert ordered[0].patient_id == "P_EMERGENCY_1"
+    assert ordered[1].patient_id == "P_ROUTINE_LONG_WAIT"
+
+
+def test_radqueue_noshow_policy_factory():
+    policy = get_policy("radqueue_noshow")
+    assert policy.name == "radqueue_noshow"
+
+
 # ---------------------------------------------------------------------------
 # Task 3: Fairness & Starvation Tests
 # ---------------------------------------------------------------------------
@@ -182,8 +195,9 @@ def test_dispatcher_dispatches_compatible_resource(sample_patients, sample_resou
     )
     assert assignment is not None
     assert assignment.resource_id in ["XRAY_1", "XRAY_2"]
-    # Emergency or high priority patient dispatched
-    assert assignment.urgency in [UrgencyLevel.EMERGENCY, UrgencyLevel.ROUTINE]
+    # Emergency patient has top priority score and should be dispatched first
+    assert assignment.urgency == UrgencyLevel.EMERGENCY
+    assert assignment.patient_id == "P_EMERGENCY_1"
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +219,6 @@ def test_day_ahead_optimizer_solves_multi_patient_schedule():
     result = optimizer.optimize_schedule(patients, resources)
     assert result["status"] == "Optimal"
     assert len(result["assignments"]) == 3
-    # Verify CT assigned to CT_1 and XRAY to XRAY_1
     for asgn in result["assignments"]:
         if asgn.patient_id == "C1":
             assert asgn.resource_id == "CT_1"
@@ -237,6 +250,7 @@ def test_emergency_preemption_replaces_routine_assignment(department_state):
         waiting_queue=[routine_p],
         resources=[Resource(resource_id="XRAY_1", modality=ModalityType.XRAY, is_available=False)],
         state=department_state,
+        active_patients=[routine_p],
     )
 
     assert emergency_asgn is not None
@@ -254,7 +268,6 @@ def test_noshow_pullforward_triggers_after_grace_window(department_state):
         modality=ModalityType.XRAY,
         arrival_time_minutes=10.0,
     )
-    # Department time is 30.0, delay = 20.0 > 15.0 min threshold
     waiting_p = PatientState(
         patient_id="WAITING_NEXT",
         modality=ModalityType.XRAY,
@@ -272,6 +285,19 @@ def test_noshow_pullforward_triggers_after_grace_window(department_state):
     assert late_patient.status == "noshow"
     assert asgn is not None
     assert asgn.patient_id == "WAITING_NEXT"
+
+
+def test_controlled_overbooking_rate_calculation():
+    rescheduler = ReschedulingEngine()
+    # If slot has 1 patient on capacity 1 (overbook rate 0.0), prob=0.40 -> Allowed
+    assert rescheduler.evaluate_controlled_overbooking(
+        slot_patients_count=1, slot_capacity=1, historical_noshow_prob=0.40
+    ) is True
+
+    # If slot already has 2 patients on capacity 1 (overbook rate 1.0 > 0.15 limit) -> Blocked
+    assert rescheduler.evaluate_controlled_overbooking(
+        slot_patients_count=2, slot_capacity=1, historical_noshow_prob=0.40
+    ) is False
 
 
 def test_equipment_failure_redistributes_to_surviving_machine(department_state):
@@ -293,20 +319,39 @@ def test_equipment_failure_redistributes_to_surviving_machine(department_state):
         state=department_state,
     )
 
-    assert resources[0].is_available is False  # XRAY_1 marked unavailable
+    assert resources[0].is_available is False
     assert len(new_asgns) == 1
-    assert new_asgns[0].resource_id == "XRAY_2"  # Re-routed to surviving machine
+    assert new_asgns[0].resource_id == "XRAY_2"
 
 
 def test_surge_detection_two_sigma():
     rescheduler = ReschedulingEngine()
-    # Mean = 10, std = 2 -> 2-sigma cutoff = 14
     normal_res = rescheduler.detect_surge(current_arrival_rate=12.0, mean_rate=10.0, std_rate=2.0)
     assert normal_res["is_surge"] is False
 
     surge_res = rescheduler.detect_surge(current_arrival_rate=16.0, mean_rate=10.0, std_rate=2.0)
     assert surge_res["is_surge"] is True
     assert surge_res["overflow_protocol_active"] is True
+
+
+def test_patient_state_explicit_preemptable_override():
+    # Explicitly set is_preemptable to False on routine patient
+    p_routine_non_preempt = PatientState(
+        patient_id="P_SPEC",
+        modality=ModalityType.XRAY,
+        urgency=UrgencyLevel.ROUTINE,
+        is_preemptable=False,
+    )
+    assert p_routine_non_preempt.is_preemptable is False
+
+    # Explicitly set is_preemptable to True on emergency patient
+    p_emerg_preempt = PatientState(
+        patient_id="P_EMERG_SPEC",
+        modality=ModalityType.XRAY,
+        urgency=UrgencyLevel.EMERGENCY,
+        is_preemptable=True,
+    )
+    assert p_emerg_preempt.is_preemptable is True
 
 
 # ---------------------------------------------------------------------------
@@ -319,10 +364,15 @@ def test_unified_radiology_scheduler_facade(sample_patients, sample_resources, d
     # Test Level 2 Dispatch
     asgn = scheduler.dispatch_next(sample_patients, sample_resources, department_state)
     assert asgn is not None
+    assert asgn.urgency == UrgencyLevel.EMERGENCY
 
     # Test Policy Ordering
     ordered_fcfs = scheduler.order_by_policy("fcfs", sample_patients)
     assert ordered_fcfs[0].patient_id == "P_ROUTINE_LONG_WAIT"
+
+    # Test Wave Policy with custom interval
+    ordered_wave = scheduler.order_by_policy("wave", sample_patients, interval_minutes=15)
+    assert len(ordered_wave) == len(sample_patients)
 
     # Test Equity Metrics
     equity = scheduler.compute_equity_metrics([p.current_wait_minutes for p in sample_patients])
