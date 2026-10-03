@@ -94,12 +94,18 @@ class FairnessEngine:
         max_val = float(np.max(arr))
         std = float(np.std(arr))
 
-        # Gini coefficient
+        # Efficient O(n log n) Gini calculation with O(n) memory
         if avg == 0 or n <= 1:
             gini = 0.0
         else:
-            diff_matrix = np.abs(np.subtract.outer(arr, arr))
-            gini = float(np.sum(diff_matrix) / (2.0 * n * n * avg))
+            sorted_arr = np.sort(arr)
+            total_sum = np.sum(sorted_arr)
+            if total_sum == 0:
+                gini = 0.0
+            else:
+                indices = np.arange(1, n + 1, dtype=np.float64)
+                gini = float((2.0 * np.sum(indices * sorted_arr) / (n * total_sum)) - (n + 1.0) / n)
+                gini = max(0.0, min(1.0, gini))
 
         return {
             "avg_wait": round(avg, 2),

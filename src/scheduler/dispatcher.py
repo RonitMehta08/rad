@@ -1,8 +1,9 @@
 """Level 2: Real-time dynamic priority dispatch engine.
 
 Implements:
-1. Dynamic priority scoring = base_urgency + fairness_bonus + modality_factor.
-2. Multi-objective resource matching minimizing predicted wait + cascade delay + idle time.
+1. Dynamic priority scoring = base_urgency + fairness_bonus + modality_factor + starvation_boost.
+2. Multi-objective resource matching minimizing:
+   alpha * avg_wait + beta * max_wait + gamma * wait_std_dev + delta * idle_penalty.
 3. Queue re-evaluation upon resource availability events.
 
 Owner: P3 (Scheduling Engineer)
@@ -41,18 +42,20 @@ class RealTimeDispatcher:
             starvation_threshold_minutes=self.config.starvation_threshold_minutes,
         )
 
-        # Objective weights for dispatch assignment
+        # Multi-objective weights aligned with config.milp.objective_weights (§7.3)
         weights = self.config.milp.objective_weights
-        self.alpha = weights.avg_wait_time
-        self.beta = weights.max_wait_time
-        self.gamma = weights.utilization
+        self.alpha = weights.avg_wait_time       # 0.40 (efficiency / avg wait)
+        self.beta = weights.max_wait_time        # 0.25 (fairness / max wait ceiling)
+        self.gamma = weights.wait_time_std_dev   # 0.15 (equity / dispersion variance)
+        self.delta = weights.utilization         # 0.20 (resource efficiency)
 
     def compute_priority_score(
         self, patient: PatientState, state: DepartmentState
     ) -> float:
         """Compute dynamic priority score for a waiting patient.
 
-        Score = base_urgency + fairness_bonus + modality_factor
+        Score = base_urgency + fairness_bonus + modality_factor + starvation_boost
+        Clinical hierarchy: Emergency (10.0+) > Starving Routine (~9.0+) > Urgent (~5.0+) > Routine (~1.0+)
         """
         base = float(URGENCY_WEIGHTS.get(patient.urgency, 1))
 
@@ -65,8 +68,8 @@ class RealTimeDispatcher:
         queue_len = state.queue_length.get(patient.modality, 0)
         modality_factor = 1.0 / (1.0 + float(queue_len))
 
-        # Starvation kicker: if patient exceeds starvation threshold, add strong boost
-        starvation_boost = 15.0 if self.fairness_engine.is_starving(patient) else 0.0
+        # Starvation kicker: boosts starving routine patients ahead of urgent, while preserving emergency primacy
+        starvation_boost = 3.0 if self.fairness_engine.is_starving(patient) else 0.0
 
         return base + wait_bonus + modality_factor + starvation_boost
 
@@ -89,7 +92,6 @@ class RealTimeDispatcher:
         self, patient: PatientState, resource: Resource, state: DepartmentState
     ) -> float:
         """Predict expected wait time if patient is routed to given resource."""
-        # Check if ML wait-time predictor is available and trained
         if self.wait_time_predictor is not None:
             try:
                 features = dict(patient.features)
@@ -112,7 +114,10 @@ class RealTimeDispatcher:
     ) -> float:
         """Estimate downstream delay imposed on other waiting patients in same modality."""
         downstream_count = state.queue_length.get(patient.modality, 1)
-        est_duration = patient.estimated_duration_minutes or SERVICE_TIME_PARAMS[patient.modality]["median_minutes"]
+        est_duration = (
+            patient.estimated_duration_minutes
+            or SERVICE_TIME_PARAMS[patient.modality]["median_minutes"]
+        )
         return float(est_duration * max(0, downstream_count - 1))
 
     def select_best_resource(
@@ -140,14 +145,16 @@ class RealTimeDispatcher:
 
         for res in compatible:
             pred_wait = self.predict_wait_for_resource(patient, res, state)
-            cascade = self.estimate_cascade_delay(res, patient, state)
+            cascade_proxy = self.estimate_cascade_delay(res, patient, state)
+            max_wait_impact = max(pred_wait, state.avg_wait_minutes)
             idle_penalty = 1.0 - res.utilization_rate
 
-            # Multi-objective score (lower is better)
+            # Multi-objective score: alpha*avg_wait + beta*max_wait + gamma*std_proxy + delta*idle
             score = (
                 self.alpha * pred_wait
-                + self.beta * cascade
-                + self.gamma * idle_penalty
+                + self.beta * max_wait_impact
+                + self.gamma * cascade_proxy
+                + self.delta * idle_penalty
             )
 
             if score < best_score:
@@ -169,7 +176,6 @@ class RealTimeDispatcher:
         if not ranked:
             return None
 
-        # Iterate through ranked candidates to find first dispatchable assignment
         for patient, priority_score in ranked:
             best_res, pred_wait, obj_score = self.select_best_resource(
                 patient, resources, state

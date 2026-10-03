@@ -43,6 +43,7 @@ class ReschedulingEngine:
         waiting_queue: list[PatientState],
         resources: list[Resource],
         state: DepartmentState,
+        active_patients: list[PatientState] | None = None,
     ) -> tuple[Assignment | None, PatientState | None]:
         """Preempt routine prep to serve an emergency arrival immediately.
 
@@ -76,11 +77,23 @@ class ReschedulingEngine:
 
         if candidate_assignment is not None:
             target_res_id = candidate_assignment.resource_id
-            for p in waiting_queue:
+            search_pool = (active_patients or []) + (state.active_patients or []) + list(waiting_queue)
+            for p in search_pool:
                 if p.patient_id == candidate_assignment.patient_id:
                     preempted_patient = p
                     break
-            # Remove displaced assignment
+
+            if preempted_patient is None:
+                # Fallback: create patient state representation from assignment
+                preempted_patient = PatientState(
+                    patient_id=candidate_assignment.patient_id,
+                    modality=emergency_patient.modality,
+                    urgency=candidate_assignment.urgency,
+                    arrival_time_minutes=candidate_assignment.start_time_minutes,
+                    current_wait_minutes=0.0,
+                )
+
+            # Remove displaced assignment from active
             active_assignments.remove(candidate_assignment)
         else:
             # Check if any compatible resource is directly available
@@ -155,27 +168,43 @@ class ReschedulingEngine:
     def evaluate_controlled_overbooking(
         self,
         slot_patients_count: int,
+        slot_capacity: int = 1,
         features: dict[str, Any] | None = None,
         historical_noshow_prob: float | None = None,
     ) -> bool:
         """Determine if a slot should be overbooked based on predicted no-show probability.
 
+        Args:
+            slot_patients_count: Total patients already scheduled in this slot.
+            slot_capacity: Baseline single-slot capacity (typically 1).
+            features: Patient features for ML model.
+            historical_noshow_prob: Default or historical probability fallback.
+
         Returns:
-            True if overbooking is permitted and advantageous.
+            True if overbooking is permitted and within safety limits.
         """
         prob = 0.0
         if self.noshow_predictor is not None and features is not None:
             try:
-                prob = float(self.noshow_predictor.predict_proba(features))
-            except Exception:
+                if hasattr(self.noshow_predictor, "predict_probability"):
+                    prob = float(self.noshow_predictor.predict_probability(features))
+                elif hasattr(self.noshow_predictor, "predict_proba"):
+                    prob = float(self.noshow_predictor.predict_proba(features))
+                else:
+                    prob = float(self.noshow_predictor.predict(features))
+            except Exception as e:
+                logger.debug(f"NoShowPredictor fallback: {e}")
                 prob = historical_noshow_prob or 0.20
         else:
             prob = historical_noshow_prob or 0.20
 
         max_overbook_frac = self.config.constraints.max_overbooking_fraction
+        current_overbook_rate = max(
+            0.0, float(slot_patients_count - slot_capacity) / float(max(1, slot_capacity))
+        )
 
-        # If probability of no-show is high (> 35%) and we haven't overbooked past safety limit
-        if prob >= 0.35 and slot_patients_count <= (1.0 + max_overbook_frac):
+        # If probability of no-show is high (>= 35%) and overbooking rate is within fraction limit
+        if prob >= 0.35 and current_overbook_rate < max_overbook_frac:
             return True
         return False
 

@@ -14,8 +14,9 @@ Reference: MASTER_PROMPT §5.3, §7.3; config/scheduler_config.yaml
 
 from __future__ import annotations
 
+import collections
 import math
-from typing import Sequence
+from typing import Any, Sequence
 import pulp
 
 from src.scheduler.config import SchedulerConfig, load_scheduler_config
@@ -84,6 +85,9 @@ class DayAheadOptimizer:
         """
         prob = pulp.LpProblem("RadiologyDayAheadSchedule", pulp.LpMinimize)
 
+        # O(1) patient lookup
+        patients_by_id: dict[str, PatientState] = {p.patient_id: p for p in patients}
+
         # Precompute patient slot durations and arrival slots
         patient_slots: dict[str, int] = {}
         arrival_slots: dict[str, int] = {}
@@ -95,6 +99,7 @@ class DayAheadOptimizer:
         # Binary decision variable: x[p, r, s] = 1 if patient p starts on machine r at slot s
         x: dict[tuple[str, str, int], pulp.LpVariable] = {}
         valid_triplets: list[tuple[str, str, int]] = []
+        occupancy_by_resource_slot: dict[tuple[str, int], list[pulp.LpVariable]] = collections.defaultdict(list)
 
         for p in patients:
             req_slots = patient_slots[p.patient_id]
@@ -106,10 +111,15 @@ class DayAheadOptimizer:
             for r in compatible_resources:
                 for s in range(arr_slot, latest_start_slot + 1):
                     triplet = (p.patient_id, r.resource_id, s)
-                    x[triplet] = pulp.LpVariable(
+                    var = pulp.LpVariable(
                         f"x_{p.patient_id}_{r.resource_id}_{s}", cat=pulp.LpBinary
                     )
+                    x[triplet] = var
                     valid_triplets.append(triplet)
+
+                    # Map to resource and time slot occupancy (s <= t < s + req_slots)
+                    for t in range(s, min(self.total_slots, s + req_slots)):
+                        occupancy_by_resource_slot[(r.resource_id, t)].append(var)
 
         # Unassigned penalty variable per patient to guarantee feasibility
         u: dict[str, pulp.LpVariable] = {
@@ -126,24 +136,14 @@ class DayAheadOptimizer:
             )
             prob += assigned_expr + u[p.patient_id] == 1, f"AssignOnce_{p.patient_id}"
 
-        # Constraint 2: Machine capacity & no overlap at any slot
+        # Constraint 2: Machine capacity & no overlap (O(R × S) vectorized via indexed occupancy)
         for r in resources:
             for t in range(self.total_slots):
-                occupying_expr = []
-                for p in patients:
-                    dur = patient_slots[p.patient_id]
-                    # Slot s occupies slot t if s <= t < s + dur
-                    for s in range(max(0, t - dur + 1), t + 1):
-                        if (p.patient_id, r.resource_id, s) in x:
-                            occupying_expr.append(x[(p.patient_id, r.resource_id, s)])
-                if occupying_expr:
-                    prob += (
-                        pulp.lpSum(occupying_expr) <= 1,
-                        f"Capacity_{r.resource_id}_slot_{t}",
-                    )
+                vars_at_slot = occupancy_by_resource_slot.get((r.resource_id, t), [])
+                if vars_at_slot:
+                    prob += pulp.lpSum(vars_at_slot) <= 1, f"Capacity_{r.resource_id}_slot_{t}"
 
         # Constraint 3: Emergency buffer reservation per modality
-        # Reserve buffer_fraction of total machine slots across the horizon for walk-ins/emergencies
         for mod in ModalityType:
             mod_resources = [r for r in resources if r.modality == mod]
             if not mod_resources:
@@ -154,7 +154,6 @@ class DayAheadOptimizer:
             mod_occupancy_expr = []
             for (pid, rid, s) in valid_triplets:
                 if any(r.resource_id == rid for r in mod_resources):
-                    p_obj = next(p for p in patients if p.patient_id == pid)
                     dur = patient_slots[pid]
                     mod_occupancy_expr.append(dur * x[(pid, rid, s)])
 
@@ -164,14 +163,10 @@ class DayAheadOptimizer:
                     f"EmergencyBuffer_{mod.value}",
                 )
 
-        # Objective function:
-        # Minimize:
-        # 1. Total weighted waiting time = sum(wait_time * urgency_weight * x)
-        # 2. Heavy penalty for unassigned patients (emergencies penalized highest)
-        # 3. Utilization bonus (slight negative cost for assigned slots)
+        # Objective function: weighted wait time + unassigned penalty
         wait_terms = []
         for (pid, rid, s) in valid_triplets:
-            p_obj = next(p for p in patients if p.patient_id == pid)
+            p_obj = patients_by_id[pid]
             arr_slot = arrival_slots[pid]
             wait_minutes = (s - arr_slot) * self.slot_duration
             urgency_wt = URGENCY_WEIGHTS.get(p_obj.urgency, 1)
@@ -209,7 +204,7 @@ class DayAheadOptimizer:
         for (pid, rid, s) in valid_triplets:
             val = pulp.value(x[(pid, rid, s)])
             if val is not None and val > 0.5:
-                p_obj = next(p for p in patients if p.patient_id == pid)
+                p_obj = patients_by_id[pid]
                 start_min = s * self.slot_duration
                 arr_slot = arrival_slots[pid]
                 wait_min = (s - arr_slot) * self.slot_duration

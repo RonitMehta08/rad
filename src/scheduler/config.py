@@ -15,7 +15,8 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-DEFAULT_CONFIG_PATH = Path("config/scheduler_config.yaml")
+# Resolve config path relative to project root
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "scheduler_config.yaml"
 
 
 class PriorityWeightsConfig(BaseModel):
@@ -95,8 +96,8 @@ def load_scheduler_config(config_path: Path | str | None = None) -> SchedulerCon
     """
     path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
     if not path.is_file():
-        # Fallback to search relative to repository root
-        alt_path = Path(__file__).resolve().parents[2] / "config" / "scheduler_config.yaml"
+        # Fallback check
+        alt_path = Path("config/scheduler_config.yaml")
         if alt_path.is_file():
             path = alt_path
         else:

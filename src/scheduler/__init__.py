@@ -22,6 +22,8 @@ from src.scheduler.policies import (
     BaseSchedulingPolicy,
     FCFSPolicy,
     PriorityPolicy,
+    RadQueueAIPolicy,
+    RadQueueNoShowPolicy,
     SJFPolicy,
     WavePolicy,
     get_policy,
@@ -91,10 +93,16 @@ class RadiologyScheduler:
         waiting_queue: list[PatientState],
         resources: list[Resource],
         state: DepartmentState,
+        active_patients: list[PatientState] | None = None,
     ) -> tuple[Assignment | None, PatientState | None]:
         """Trigger Level 3 emergency preemption and cascade rescheduling."""
         return self.rescheduler.handle_emergency_preemption(
-            emergency_patient, active_assignments, waiting_queue, resources, state
+            emergency_patient,
+            active_assignments,
+            waiting_queue,
+            resources,
+            state,
+            active_patients=active_patients,
         )
 
     def handle_noshow(
@@ -134,9 +142,17 @@ class RadiologyScheduler:
         queue: Sequence[PatientState],
         state: DepartmentState | None = None,
         modality: ModalityType | None = None,
+        **kwargs: Any,
     ) -> list[PatientState]:
         """Order queue according to any registered baseline or comparative policy."""
-        policy = get_policy(policy_name)
+        policy_kwargs = dict(kwargs)
+        norm_name = policy_name.lower().strip()
+        if norm_name == "wave" and "interval_minutes" not in policy_kwargs:
+            policy_kwargs["interval_minutes"] = self.config.wave_scheduling.interval_minutes
+        elif norm_name in ["radqueue_ai", "radqueue_noshow"] and "config" not in policy_kwargs:
+            policy_kwargs["config"] = self.config
+
+        policy = get_policy(norm_name, **policy_kwargs)
         return policy.order_queue(queue, state, modality)
 
     def compute_equity_metrics(
@@ -161,6 +177,8 @@ __all__ = [
     "PriorityPolicy",
     "SJFPolicy",
     "WavePolicy",
+    "RadQueueAIPolicy",
+    "RadQueueNoShowPolicy",
     "get_policy",
     "load_scheduler_config",
     "SchedulerConfig",
