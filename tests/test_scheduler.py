@@ -14,18 +14,18 @@ Owner: P3 (Scheduling Engineer)
 import pytest
 
 from src.scheduler import (
-    RadiologyScheduler,
+    Assignment,
     DayAheadOptimizer,
-    RealTimeDispatcher,
-    ReschedulingEngine,
+    DepartmentState,
     FairnessEngine,
     PatientState,
+    RadiologyScheduler,
+    RealTimeDispatcher,
+    ReschedulingEngine,
     Resource,
-    Assignment,
-    DepartmentState,
     get_policy,
 )
-from src.utils.constants import ModalityType, UrgencyLevel, VisitType
+from src.utils.constants import ModalityType, UrgencyLevel
 
 
 @pytest.fixture

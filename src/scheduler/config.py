@@ -7,7 +7,7 @@ Reference: config/scheduler_config.yaml; MASTER_PROMPT §7.3
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+
 import yaml
 from pydantic import BaseModel, Field
 
@@ -104,7 +104,7 @@ def load_scheduler_config(config_path: Path | str | None = None) -> SchedulerCon
             logger.warning(f"Scheduler config not found at {path}, using defaults")
             return SchedulerConfig()
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         raw_data = yaml.safe_load(f) or {}
 
     logger.info(f"Loaded scheduler configuration from {path}")

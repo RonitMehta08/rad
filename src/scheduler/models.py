@@ -7,13 +7,14 @@ Reference: MASTER_PROMPT §5.3, §7.3; config/scheduler_config.yaml
 from __future__ import annotations
 
 from typing import Any
+
 from pydantic import BaseModel, Field
 
 from src.utils.constants import (
+    SERVICE_TIME_PARAMS,
     ModalityType,
     UrgencyLevel,
     VisitType,
-    SERVICE_TIME_PARAMS,
 )
 
 
@@ -74,7 +75,7 @@ class DepartmentState(BaseModel):
     current_time_minutes: float = 0.0
     avg_wait_minutes: float = 0.0
     queue_length: dict[ModalityType, int] = Field(
-        default_factory=lambda: {m: 0 for m in ModalityType}
+        default_factory=lambda: dict.fromkeys(ModalityType, 0)
     )
     waiting_patients: list[PatientState] = Field(default_factory=list)
     active_patients: list[PatientState] = Field(default_factory=list)

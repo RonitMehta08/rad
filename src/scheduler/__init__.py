@@ -6,7 +6,8 @@ Reference: MASTER_PROMPT §5.3, §7.3; config/scheduler_config.yaml
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from src.scheduler.config import SchedulerConfig, load_scheduler_config
 from src.scheduler.dispatcher import RealTimeDispatcher
@@ -29,7 +30,7 @@ from src.scheduler.policies import (
     get_policy,
 )
 from src.scheduler.rescheduler import ReschedulingEngine
-from src.utils.constants import ModalityType, UrgencyLevel
+from src.utils.constants import ModalityType
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)

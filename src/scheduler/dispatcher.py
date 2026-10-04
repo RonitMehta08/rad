@@ -12,15 +12,16 @@ Reference: MASTER_PROMPT §5.3, §7.3; config/scheduler_config.yaml
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
+
 from src.scheduler.config import SchedulerConfig, load_scheduler_config
 from src.scheduler.fairness import FairnessEngine
 from src.scheduler.models import Assignment, DepartmentState, PatientState, Resource
 from src.utils.constants import (
-    ModalityType,
-    UrgencyLevel,
-    URGENCY_WEIGHTS,
     SERVICE_TIME_PARAMS,
+    URGENCY_WEIGHTS,
+    ModalityType,
 )
 from src.utils.logger import get_logger
 
@@ -176,7 +177,7 @@ class RealTimeDispatcher:
         if not ranked:
             return None
 
-        for patient, priority_score in ranked:
+        for patient, _priority_score in ranked:
             best_res, pred_wait, obj_score = self.select_best_resource(
                 patient, resources, state
             )

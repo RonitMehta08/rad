@@ -16,7 +16,7 @@ scipy>=1.11
 simpy>=4.0
 
 # Optimization
-pulp>=2.7
+pulp>=2.8,<4.0
 ortools>=9.7
 
 # API

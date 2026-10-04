@@ -11,16 +11,17 @@ Reference: MASTER_PROMPT §4, §5.3, §7.3; config/scheduler_config.yaml
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
+
 import numpy as np
 
 from src.scheduler.models import PatientState
 from src.utils.constants import (
-    UrgencyLevel,
     FAIRNESS_PENALTY_RATE,
+    MAX_WAIT_EMERGENCY_MINUTES,
     MAX_WAIT_ROUTINE_MINUTES,
     MAX_WAIT_URGENT_MINUTES,
-    MAX_WAIT_EMERGENCY_MINUTES,
+    UrgencyLevel,
 )
 from src.utils.logger import get_logger
 

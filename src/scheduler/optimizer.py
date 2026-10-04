@@ -16,16 +16,18 @@ from __future__ import annotations
 
 import collections
 import math
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
+
 import pulp
 
 from src.scheduler.config import SchedulerConfig, load_scheduler_config
 from src.scheduler.models import Assignment, PatientState, Resource
 from src.utils.constants import (
+    SERVICE_TIME_PARAMS,
+    URGENCY_WEIGHTS,
     ModalityType,
     UrgencyLevel,
-    URGENCY_WEIGHTS,
-    SERVICE_TIME_PARAMS,
 )
 from src.utils.logger import get_logger
 

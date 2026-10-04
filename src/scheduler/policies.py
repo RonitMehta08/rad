@@ -15,12 +15,13 @@ Reference: MASTER_PROMPT §7.3, §8.2; config/scheduler_config.yaml
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from src.scheduler.config import SchedulerConfig, load_scheduler_config
 from src.scheduler.fairness import FairnessEngine
 from src.scheduler.models import DepartmentState, PatientState
-from src.utils.constants import ModalityType, UrgencyLevel, URGENCY_WEIGHTS
+from src.utils.constants import URGENCY_WEIGHTS, ModalityType, UrgencyLevel
 
 
 class BaseSchedulingPolicy(ABC):

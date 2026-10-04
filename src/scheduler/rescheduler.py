@@ -12,11 +12,12 @@ Reference: MASTER_PROMPT §4, §5.3, §7.3; config/scheduler_config.yaml
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any
+
 from src.scheduler.config import SchedulerConfig, load_scheduler_config
 from src.scheduler.dispatcher import RealTimeDispatcher
 from src.scheduler.models import Assignment, DepartmentState, PatientState, Resource
-from src.utils.constants import ModalityType, UrgencyLevel, SERVICE_TIME_PARAMS
+from src.utils.constants import SERVICE_TIME_PARAMS, UrgencyLevel
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -204,9 +205,7 @@ class ReschedulingEngine:
         )
 
         # If probability of no-show is high (>= 35%) and overbooking rate is within fraction limit
-        if prob >= 0.35 and current_overbook_rate < max_overbook_frac:
-            return True
-        return False
+        return prob >= 0.35 and current_overbook_rate < max_overbook_frac
 
     def handle_equipment_failure(
         self,
