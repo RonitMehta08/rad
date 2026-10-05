@@ -27,7 +27,6 @@ from src.utils.constants import (
     WeatherCategory,
 )
 
-
 # ---------------------------------------------------------------------------
 # Core Patient Record — the main data contract
 # ---------------------------------------------------------------------------
@@ -43,7 +42,7 @@ class PatientRecord(BaseModel):
 
     # -- Identity --
     patient_id: str = Field(..., description="Unique patient identifier (e.g., 'P-00001')")
-    
+
     # -- Patient Features --
     age_group: AgeGroup
     gender: str = Field(..., pattern=r"^(M|F|Other)$")

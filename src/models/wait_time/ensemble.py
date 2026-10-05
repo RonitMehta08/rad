@@ -280,9 +280,15 @@ def main() -> None:
 
     train_df = pd.read_parquet(args.data / "train.parquet")
     val_df = pd.read_parquet(args.data / "val.parquet")
+    test_path = args.data / "test.parquet"
+    test_df = pd.read_parquet(test_path) if test_path.exists() else None
 
     ensemble = StackingEnsemble()
     metrics = ensemble.fit(train_df, val_df, args.models)
+
+    from src.models.wait_time.trainer import compute_evaluation_extras, copy_feature_encoders
+    extras = compute_evaluation_extras(ensemble, val_df, test_df)
+    copy_feature_encoders(args.data, args.output.parent)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(ensemble, args.output)
@@ -299,6 +305,7 @@ def main() -> None:
                 name: float(w) for name, w in zip(ensemble.base_models.keys(), ensemble.meta_learner.coef_)
             } if ensemble.meta_learner else {},
             "metrics": metrics,
+            **extras,
         }, f, indent=2)
 
     logger.info(f"Ensemble MAE: {metrics['mae']:.4f}")

@@ -4,33 +4,54 @@
     "eval_metric": "auc",
     "n_estimators": "2000",
     "random_state": "42",
-    "max_depth": "3",
-    "learning_rate": "0.06820408975583538",
-    "min_child_weight": "2",
-    "subsample": "0.8110910486811733",
-    "colsample_bytree": "0.6630440653430346",
-    "reg_alpha": "3.070234375377283",
-    "reg_lambda": "1.2339143798845602",
-    "scale_pos_weight": "3.815517146676572",
+    "max_depth": "5",
+    "learning_rate": "0.09376358016668301",
+    "min_child_weight": "7",
+    "subsample": "0.8130142216927261",
+    "colsample_bytree": "0.6835725585457718",
+    "reg_alpha": "1.0814992349536952",
+    "reg_lambda": "1.577084631895623",
+    "scale_pos_weight": "4.195353687406662",
     "tree_method": "hist"
   },
+  "decision_threshold": 0.15636306523958657,
+  "training_population": "scheduled appointments only",
   "metrics": {
-    "auc_roc": 0.9058706773707862,
-    "auc_pr": 0.3019468714351431,
-    "f1": 0.0,
-    "precision": 0.0,
-    "recall": 0.0,
+    "auc_roc": 0.6336341566966766,
+    "auc_pr": 0.34023345958712153,
+    "f1": 0.4213886671987231,
+    "precision": 0.27442827442827444,
+    "recall": 0.9072164948453608,
     "confusion_matrix": [
       [
-        4593,
-        0
+        249,
+        698
       ],
       [
-        189,
-        0
+        27,
+        264
       ]
     ],
-    "optimal_threshold": 0.09880826573971928,
-    "threshold_used": 0.5
+    "optimal_threshold": 0.15636306523958657,
+    "threshold_used": 0.15636306523958657
+  },
+  "test_metrics": {
+    "auc_roc": 0.6048690586658418,
+    "auc_pr": 0.38452916275779914,
+    "f1": 0.4652143359100492,
+    "precision": 0.31315042573320717,
+    "recall": 0.9043715846994536,
+    "confusion_matrix": [
+      [
+        122,
+        726
+      ],
+      [
+        35,
+        331
+      ]
+    ],
+    "optimal_threshold": 0.22469098496379525,
+    "threshold_used": 0.15636306523958657
   }
 }

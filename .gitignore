@@ -41,7 +41,7 @@ mlflow/
 # Reports (generated)
 reports/figures/*.png
 reports/figures/*.html
-reports/final_report.md
+# reports/final_report.md is committed (auto-generated deliverable)
 
 # Jupyter
 .ipynb_checkpoints/

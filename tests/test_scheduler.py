@@ -20,6 +20,7 @@ from src.scheduler import (
     FairnessEngine,
     PatientState,
     RadiologyScheduler,
+    RadQueueAIPolicy,
     RealTimeDispatcher,
     ReschedulingEngine,
     Resource,
@@ -382,3 +383,20 @@ def test_unified_radiology_scheduler_facade(sample_patients, sample_resources, d
     # Test Level 1 Day-Ahead MILP
     plan = scheduler.optimize_day_ahead(sample_patients[:2], sample_resources[:2])
     assert plan["status"] == "Optimal"
+
+
+def test_should_rank_new_emergency_first_when_others_have_waited_long():
+    """Regression: uncapped fairness bonus once let long-waiting patients overtake emergencies."""
+    state = DepartmentState()
+    queue = [
+        PatientState(patient_id="EMERG_new", modality=ModalityType.MRI, urgency=UrgencyLevel.EMERGENCY,
+                     arrival_time_minutes=100, current_wait_minutes=0),
+        PatientState(patient_id="URGENT_60m", modality=ModalityType.MRI, urgency=UrgencyLevel.URGENT,
+                     arrival_time_minutes=40, current_wait_minutes=60),
+        PatientState(patient_id="ROUTINE_120m", modality=ModalityType.MRI, urgency=UrgencyLevel.ROUTINE,
+                     arrival_time_minutes=0, current_wait_minutes=120),
+    ]
+    policy_order = RadQueueAIPolicy().order_queue(queue, state)
+    dispatcher_order = RealTimeDispatcher().rank_queue(queue, state)
+    assert policy_order[0].patient_id == "EMERG_new"
+    assert dispatcher_order[0][0].patient_id == "EMERG_new"

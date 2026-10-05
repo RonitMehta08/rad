@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 from pathlib import Path
 from typing import Any
@@ -24,10 +25,12 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.utils.constants import RANDOM_SEED, TEST_RATIO, TRAIN_RATIO, VAL_RATIO
+from src.utils.constants import TRAIN_RATIO, VAL_RATIO
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+TARGET_COLUMN: str = "actual_wait_time_minutes"
 
 
 # ---------------------------------------------------------------------------
@@ -53,64 +56,70 @@ def encode_cyclical(df: pd.DataFrame, column: str, period: int) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Rolling Statistics (§7.1 Step 2)
+# Known-Wait Features (leakage-safe rolling + lag statistics, §7.1 Step 2)
 # ---------------------------------------------------------------------------
+#
+# A patient's own wait (and the waits of patients still in the queue) are not
+# observable when we predict at registration time. Wait-based features are
+# therefore computed only from patients whose imaging had already STARTED
+# strictly before the current patient's registration time.
+
+ROLLING_WINDOWS_MINUTES: dict[str, int] = {"rolling_avg_wait_30min": 30, "rolling_avg_wait_1hr": 60}
+ARRIVAL_RATE_WINDOW_MINUTES: int = 15
+LAST_N_SERVED: int = 3
+NANOSECONDS_PER_MINUTE: int = 60 * 1_000_000_000
+
+
+def _to_ns(series: pd.Series) -> np.ndarray:
+    """Convert a datetime-like Series to int64 nanoseconds."""
+    return pd.to_datetime(series).values.astype("datetime64[ns]").astype("int64")
+
+
+def _known_wait_lookup(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return (imaging_start_ns, waits, cumulative_waits) of served patients sorted by imaging start."""
+    if "imaging_start_time" not in df.columns or TARGET_COLUMN not in df.columns:
+        return np.array([], dtype="int64"), np.array([]), np.array([0.0])
+    served = df.loc[df[TARGET_COLUMN].notna() & df["imaging_start_time"].notna(),
+                    ["imaging_start_time", TARGET_COLUMN]]
+    served = served.sort_values("imaging_start_time")
+    waits = served[TARGET_COLUMN].to_numpy(dtype=float)
+    return _to_ns(served["imaging_start_time"]), waits, np.concatenate([[0.0], np.cumsum(waits)])
 
 
 def compute_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute rolling window statistics over recent patient records.
+    """Compute leakage-safe rolling statistics.
 
-    Computes 15-min, 30-min, and 60-min rolling averages for wait times,
-    service times, and arrival counts.
+    * ``rolling_avg_wait_{30min,1hr}``: mean wait of patients whose imaging started
+      within the window before this patient's registration (NaN if none).
+    * ``arrival_rate_last_15min``: patients who actually arrived (no-shows excluded)
+      in the 15 minutes up to and including this registration, per minute.
 
     Args:
-        df: DataFrame sorted by registration_time.
+        df: DataFrame with ``registration_time`` (and ideally ``imaging_start_time``).
 
     Returns:
-        DataFrame with added rolling feature columns.
+        DataFrame sorted by registration_time with rolling feature columns added.
     """
-    df = df.sort_values("registration_time").copy()
-
-    # Ensure registration_time is datetime
+    df = df.sort_values("registration_time").reset_index(drop=True)
     if not pd.api.types.is_datetime64_any_dtype(df["registration_time"]):
         df["registration_time"] = pd.to_datetime(df["registration_time"])
+    reg_ns = _to_ns(df["registration_time"])
 
-    df = df.set_index("registration_time", drop=False)
+    starts, _, cum = _known_wait_lookup(df)
+    hi = np.searchsorted(starts, reg_ns, side="left")
+    for col, minutes in ROLLING_WINDOWS_MINUTES.items():
+        lo = np.searchsorted(starts, reg_ns - minutes * NANOSECONDS_PER_MINUTE, side="left")
+        count = hi - lo
+        df[col] = np.where(count > 0, (cum[hi] - cum[lo]) / np.maximum(count, 1), np.nan)
 
-    # Rolling average wait time
-    if "actual_wait_time_minutes" in df.columns:
-        wait_col = df["actual_wait_time_minutes"].fillna(0)
-        df["rolling_avg_wait_1hr"] = wait_col.rolling("60min", min_periods=1).mean().values
-        df["rolling_avg_wait_30min"] = wait_col.rolling("30min", min_periods=1).mean().values
+    if "showed_up" in df.columns:
+        arrived = df["showed_up"].astype(bool).to_numpy()
     else:
-        df["rolling_avg_wait_1hr"] = 0.0
-        df["rolling_avg_wait_30min"] = 0.0
-
-    # Rolling arrival rate (patients per minute in last 15 min)
-    df["_ones"] = 1.0
-    arrival_counts = df["_ones"].rolling("15min", min_periods=1).sum()
-    df["arrival_rate_last_15min"] = (arrival_counts / 15.0).values
-    df = df.drop(columns=["_ones"])
-
-    # Rolling average service time
-    if "avg_service_time_last_5_patients" in df.columns:
-        df["rolling_avg_service_30min"] = (
-            df["avg_service_time_last_5_patients"]
-            .rolling("30min", min_periods=1)
-            .mean()
-            .values
-        )
-
-    # Rolling emergency count
-    if "emergency_patients_in_queue" in df.columns:
-        df["rolling_emergency_15min"] = (
-            df["emergency_patients_in_queue"]
-            .rolling("15min", min_periods=1)
-            .sum()
-            .values
-        )
-
-    df = df.reset_index(drop=True)
+        arrived = np.ones(len(df), dtype=bool)
+    arrived_ns = np.sort(reg_ns[arrived])
+    upper = np.searchsorted(arrived_ns, reg_ns, side="right")
+    lower = np.searchsorted(arrived_ns, reg_ns - ARRIVAL_RATE_WINDOW_MINUTES * NANOSECONDS_PER_MINUTE, side="right")
+    df["arrival_rate_last_15min"] = (upper - lower) / float(ARRIVAL_RATE_WINDOW_MINUTES)
     return df
 
 
@@ -120,27 +129,32 @@ def compute_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def compute_lag_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute lag features from preceding patients.
+    """Compute leakage-safe lag features.
+
+    ``wait_time_last_served_patient`` / ``wait_time_last_3_avg`` use the most
+    recent patients whose imaging started before this registration.
 
     Args:
-        df: DataFrame sorted by registration_time.
+        df: DataFrame (any order; returned sorted by registration_time).
 
     Returns:
         DataFrame with lag feature columns added.
     """
-    df = df.sort_values("registration_time").copy()
-
-    if "actual_wait_time_minutes" in df.columns:
-        wait_col = df["actual_wait_time_minutes"].fillna(0)
-        df["wait_time_last_served_patient"] = wait_col.shift(1).fillna(0)
-        df["wait_time_last_3_avg"] = wait_col.shift(1).rolling(3, min_periods=1).mean().fillna(0)
+    df = df.sort_values("registration_time").reset_index(drop=True)
+    reg_ns = _to_ns(df["registration_time"])
+    starts, waits, cum = _known_wait_lookup(df)
+    hi = np.searchsorted(starts, reg_ns, side="left")
+    lo = np.maximum(hi - LAST_N_SERVED, 0)
+    has_any = hi > 0
+    if len(waits):
+        df["wait_time_last_served_patient"] = np.where(has_any, waits[np.maximum(hi - 1, 0)], np.nan)
     else:
-        df["wait_time_last_served_patient"] = 0.0
-        df["wait_time_last_3_avg"] = 0.0
+        df["wait_time_last_served_patient"] = np.nan
+    df["wait_time_last_3_avg"] = np.where(has_any, (cum[hi] - cum[lo]) / np.maximum(hi - lo, 1), np.nan)
 
     if "current_queue_length_total" in df.columns:
         ql = df["current_queue_length_total"]
-        # Approximate 15-min queue change using a lag of ~3-5 patients
+        # Approximate 15-min queue change using a lag of ~5 registrations (known at prediction time)
         df["queue_length_change_last_15min"] = (ql - ql.shift(5).fillna(ql)).astype(int)
     else:
         df["queue_length_change_last_15min"] = 0
@@ -395,8 +409,14 @@ FEATURE_COLUMNS: list[str] = [
     "modality_target_enc", "shift_type_target_enc", "exam_complexity_target_enc",
 ]
 
-TARGET_COLUMN: str = "actual_wait_time_minutes"
 NOSHOW_TARGET_COLUMN: str = "showed_up"
+ENCODERS_FILENAME: str = "feature_encoders.json"
+OUTLIER_CAP_PERCENTILE: float = 99.0
+TARGET_ENCODED_COLUMNS: list[tuple[str, str]] = [
+    ("modality", "modality_target_enc"),
+    ("shift_type", "shift_type_target_enc"),
+    ("exam_complexity", "exam_complexity_target_enc"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -404,18 +424,60 @@ NOSHOW_TARGET_COLUMN: str = "showed_up"
 # ---------------------------------------------------------------------------
 
 
+def fit_feature_encoders(train_df: pd.DataFrame, smoothing: float = 10.0) -> dict[str, Any]:
+    """Fit everything inference needs to rebuild features for a new patient.
+
+    Args:
+        train_df: Training split (after feature engineering, before column selection).
+        smoothing: Target-encoding smoothing factor.
+
+    Returns:
+        JSON-serialisable dict with target-encoding maps, the global target mean
+        and per-feature training medians (defaults for unknown context).
+    """
+    target_encodings: dict[str, dict[str, float]] = {}
+    for col_name, enc_name in TARGET_ENCODED_COLUMNS:
+        if col_name in train_df.columns:
+            _, mapping = compute_target_encoding(train_df, col_name, TARGET_COLUMN, smoothing)
+            target_encodings[enc_name] = {str(k): float(v) for k, v in mapping.items()}
+    medians = {
+        col: float(train_df[col].median())
+        for col in FEATURE_COLUMNS
+        if col in train_df.columns
+        and pd.api.types.is_numeric_dtype(train_df[col])
+        and train_df[col].notna().any()
+    }
+    return {
+        "target_encodings": target_encodings,
+        "global_mean": float(train_df[TARGET_COLUMN].dropna().mean()),
+        "feature_medians": medians,
+    }
+
+
+def apply_target_encodings(df: pd.DataFrame, encoders: dict[str, Any]) -> pd.DataFrame:
+    """Apply fitted target encodings (unseen categories map to the training global mean)."""
+    for col_name, enc_name in TARGET_ENCODED_COLUMNS:
+        mapping = encoders["target_encodings"].get(enc_name)
+        if mapping is not None and col_name in df.columns:
+            df[enc_name] = df[col_name].astype(str).map(mapping).fillna(encoders["global_mean"]).astype(float)
+    return df
+
+
 def run_preprocessing_pipeline(
     df: pd.DataFrame,
     config: dict[str, Any] | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    return_encoders: bool = False,
+) -> Any:
     """Run the complete feature engineering pipeline.
 
     Args:
         df: Raw patient records DataFrame.
         config: Optional model config dictionary.
+        return_encoders: If True, also return the fitted feature encoders.
 
     Returns:
-        Tuple of (train, val, test) DataFrames with feature columns + target.
+        Tuple of (train, val, test) DataFrames with feature columns + target,
+        plus the encoders dict when ``return_encoders`` is True.
     """
     logger.info(f"Starting preprocessing pipeline on {len(df)} records")
 
@@ -426,55 +488,43 @@ def run_preprocessing_pipeline(
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    # 2. Cap outliers on wait times
-    df = cap_outliers(df, TARGET_COLUMN, percentile=99)
-
-    # 3. Cyclical encoding
+    # 2. Cyclical + categorical encoding
     df = encode_cyclical(df, "hour_of_day", period=24)
     df = encode_cyclical(df, "day_of_week", period=7)
-
-    # 4. Categorical encoding
     df = encode_categoricals(df)
 
-    # 5. Rolling features (requires sorted data)
+    # 3. Rolling + lag features (leakage-safe; only waits known at registration time)
     df = compute_rolling_features(df)
-
-    # 6. Lag features
     df = compute_lag_features(df)
 
-    # 7. Interaction features
+    # 4. Interaction features
     df = compute_interaction_features(df)
 
-    # 8. Time-based split
+    # 5. Time-based split
     train_df, val_df, test_df = time_based_split(df)
 
-    # 9. Target encoding (fit on train, apply to val/test)
+    # 6. Cap target outliers using the TRAINING percentile only (no test information)
+    cap_value = train_df[TARGET_COLUMN].quantile(OUTLIER_CAP_PERCENTILE / 100)
+    for split in (train_df, val_df, test_df):
+        split[TARGET_COLUMN] = split[TARGET_COLUMN].clip(upper=cap_value)
+
+    # 7. Target encoding + medians (fit on train, apply to all splits)
     smoothing = 10.0
     if config and "feature_engineering" in config:
         smoothing = config["feature_engineering"].get("target_encoding_smoothing", 10.0)
+    encoders = fit_feature_encoders(train_df, smoothing)
+    for split in (train_df, val_df, test_df):
+        apply_target_encodings(split, encoders)
 
-    for col_name, enc_name in [("modality", "modality_target_enc"),
-                                ("shift_type", "shift_type_target_enc"),
-                                ("exam_complexity", "exam_complexity_target_enc")]:
-        if col_name in train_df.columns:
-            encoded_train, mapping = compute_target_encoding(train_df, col_name, TARGET_COLUMN, smoothing)
-            global_mean = train_df[TARGET_COLUMN].dropna().mean()
-            train_df[enc_name] = encoded_train
-            val_df[enc_name] = val_df[col_name].map(mapping).fillna(global_mean)
-            test_df[enc_name] = test_df[col_name].map(mapping).fillna(global_mean)
-
-    # 10. Fill missing values
+    # 8. Fill missing values with TRAINING medians
     for split in (train_df, val_df, test_df):
         for col in FEATURE_COLUMNS:
             if col in split.columns:
-                if split[col].dtype in ("float64", "float32", "int64", "int32"):
-                    split[col] = split[col].fillna(split[col].median() if len(split[col].dropna()) > 0 else 0)
-                else:
-                    split[col] = split[col].fillna(0)
+                split[col] = split[col].fillna(encoders["feature_medians"].get(col, 0.0))
 
-    # 11. Select final columns
+    # 9. Select final columns
     available_features = [c for c in FEATURE_COLUMNS if c in train_df.columns]
-    extra_cols = [TARGET_COLUMN, NOSHOW_TARGET_COLUMN, "patient_id", "registration_time", "modality"]
+    extra_cols = [TARGET_COLUMN, NOSHOW_TARGET_COLUMN, "patient_id", "registration_time", "modality", "visit_type"]
     keep_cols = available_features + [c for c in extra_cols if c in train_df.columns]
 
     train_df = train_df[keep_cols].copy()
@@ -484,6 +534,8 @@ def run_preprocessing_pipeline(
     logger.info(f"Preprocessing complete. Features: {len(available_features)}")
     logger.info(f"Final shapes — train: {train_df.shape}, val: {val_df.shape}, test: {test_df.shape}")
 
+    if return_encoders:
+        return train_df, val_df, test_df, encoders
     return train_df, val_df, test_df
 
 
@@ -514,13 +566,15 @@ def main() -> None:
     logger.info(f"Loaded {len(df)} records from {args.input}")
 
     # Run pipeline
-    train_df, val_df, test_df = run_preprocessing_pipeline(df, config)
+    train_df, val_df, test_df, encoders = run_preprocessing_pipeline(df, config, return_encoders=True)
 
     # Save
     args.output.mkdir(parents=True, exist_ok=True)
     train_df.to_parquet(args.output / "train.parquet", index=False)
     val_df.to_parquet(args.output / "val.parquet", index=False)
     test_df.to_parquet(args.output / "test.parquet", index=False)
+    with open(args.output / ENCODERS_FILENAME, "w", encoding="utf-8") as f:
+        json.dump(encoders, f, indent=2)
 
     logger.info(f"Saved processed splits to {args.output}")
 

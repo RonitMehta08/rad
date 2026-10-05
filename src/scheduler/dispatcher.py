@@ -22,10 +22,40 @@ from src.utils.constants import (
     SERVICE_TIME_PARAMS,
     URGENCY_WEIGHTS,
     ModalityType,
+    UrgencyLevel,
 )
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+MINUTES_PER_HOUR = 60
+
+
+def build_scheduler_context(
+    patient: PatientState, resource: Resource, state: DepartmentState
+) -> dict[str, Any]:
+    """Translate scheduler state into raw wait-time model inputs.
+
+    Keys match the raw columns understood by ``src.data.feature_builder``.
+    """
+    same_modality = [p for p in state.waiting_patients if p.modality == patient.modality]
+    machines = [r for r in state.resources if r.modality == patient.modality] or [resource]
+    busy = sum(1 for r in machines if not r.is_available)
+    return {
+        "modality": patient.modality.value,
+        "urgency": patient.urgency.value,
+        "visit_type": patient.visit_type.value,
+        "current_queue_length_same_modality": state.queue_length.get(patient.modality, len(same_modality)),
+        "current_queue_length_total": sum(state.queue_length.values()) or len(state.waiting_patients),
+        "emergency_patients_in_queue": sum(
+            1 for p in state.waiting_patients if p.urgency == UrgencyLevel.EMERGENCY
+        ),
+        "patients_in_service_count": busy,
+        "num_machines_available": len(machines),
+        "minutes_since_department_opened": state.current_time_minutes,
+        "hour_of_day": 8 + int(state.current_time_minutes // MINUTES_PER_HOUR),
+    }
+
 
 
 class RealTimeDispatcher:
@@ -56,7 +86,8 @@ class RealTimeDispatcher:
         """Compute dynamic priority score for a waiting patient.
 
         Score = base_urgency + fairness_bonus + modality_factor + starvation_boost
-        Clinical hierarchy: Emergency (10.0+) > Starving Routine (~9.0+) > Urgent (~5.0+) > Routine (~1.0+)
+        Emergencies are additionally placed in a strict top tier by ``rank_queue``,
+        so this score only orders patients within the emergency / non-emergency tiers.
         """
         base = float(URGENCY_WEIGHTS.get(patient.urgency, 1))
 
@@ -86,25 +117,36 @@ class RealTimeDispatcher:
             (p, self.compute_priority_score(p, state))
             for p in candidates
         ]
-        # Sort descending by score, tie-break by arrival time
-        return sorted(scored, key=lambda item: (-item[1], item[0].arrival_time_minutes))
+        # Emergencies always rank first (uncapped fairness bonuses must never let a
+        # long-waiting routine/urgent patient overtake them); then by score, then arrival.
+        return sorted(
+            scored,
+            key=lambda item: (
+                0 if item[0].urgency == UrgencyLevel.EMERGENCY else 1,
+                -item[1],
+                item[0].arrival_time_minutes,
+            ),
+        )
 
     def predict_wait_for_resource(
         self, patient: PatientState, resource: Resource, state: DepartmentState
     ) -> float:
-        """Predict expected wait time if patient is routed to given resource."""
+        """Predict expected wait time if patient is routed to given resource.
+
+        When a ``WaitTimePredictor`` is attached, the live department state is
+        translated into the model's real feature names (see
+        ``build_scheduler_context``); otherwise an analytical estimate is used.
+        """
         if self.wait_time_predictor is not None:
             try:
-                features = dict(patient.features)
-                features.update({
-                    "modality": patient.modality.value,
-                    "queue_length": state.queue_length.get(patient.modality, 0),
-                    "resource_utilization": resource.utilization_rate,
-                })
-                pred = self.wait_time_predictor.predict(features)
-                return float(pred)
-            except Exception as e:
-                logger.debug(f"Predictor fallback: {e}")
+                raw = dict(patient.features)
+                raw.update(build_scheduler_context(patient, resource, state))
+                return float(self.wait_time_predictor.predict(raw))
+            except Exception as e:  # predictor problems must be visible, not silent
+                logger.warning(
+                    f"Wait-time predictor failed for patient_id={patient.patient_id}, "
+                    f"modality={patient.modality.value}; using analytical fallback: {e}"
+                )
 
         # Analytical fallback: time until resource is free + patient's current wait
         time_to_free = max(0.0, resource.busy_until_minute - state.current_time_minutes)

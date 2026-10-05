@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -24,10 +25,9 @@ import numpy as np
 import optuna
 import pandas as pd
 from sklearn.linear_model import ElasticNet
-from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import StandardScaler
 
-from src.data.preprocessor import FEATURE_COLUMNS, TARGET_COLUMN
+from src.data.preprocessor import ENCODERS_FILENAME, FEATURE_COLUMNS, TARGET_COLUMN
 from src.utils.constants import (
     EARLY_STOPPING_PATIENCE,
     OPTUNA_N_TRIALS_DEFAULT,
@@ -67,6 +67,61 @@ def _get_feature_target(
     X = X.fillna(0)
 
     return X, y, available
+
+
+# ---------------------------------------------------------------------------
+# Held-out Evaluation Helpers
+# ---------------------------------------------------------------------------
+
+RESIDUAL_LOWER_QUANTILE: float = 0.05
+RESIDUAL_UPPER_QUANTILE: float = 0.95
+
+
+def predict_with_package(model: Any, X: pd.DataFrame) -> np.ndarray:
+    """Predict with a plain model or an Elastic Net ``{'scaler', 'model'}`` package."""
+    if isinstance(model, dict) and "scaler" in model:
+        return model["model"].predict(model["scaler"].transform(X))
+    return model.predict(X)
+
+
+def compute_evaluation_extras(
+    model: Any,
+    val_df: pd.DataFrame,
+    test_df: pd.DataFrame | None,
+) -> dict[str, Any]:
+    """Compute validation residual quantiles (for prediction intervals) and test metrics.
+
+    Args:
+        model: Trained model or Elastic Net package.
+        val_df: Validation split.
+        test_df: Held-out test split, or None if unavailable.
+
+    Returns:
+        Dict with ``residual_quantiles`` and (if test data given) ``test_metrics``.
+    """
+    X_val, y_val, _ = _get_feature_target(val_df)
+    residuals = y_val.values - np.clip(predict_with_package(model, X_val), 0, None)
+    extras: dict[str, Any] = {
+        "residual_quantiles": {
+            "q05": float(np.quantile(residuals, RESIDUAL_LOWER_QUANTILE)),
+            "q95": float(np.quantile(residuals, RESIDUAL_UPPER_QUANTILE)),
+        },
+    }
+    if test_df is not None:
+        X_test, y_test, _ = _get_feature_target(test_df)
+        test_preds = np.clip(predict_with_package(model, X_test), 0, None)
+        extras["test_metrics"] = compute_all_regression_metrics(y_test.values, test_preds)
+    return extras
+
+
+def copy_feature_encoders(data_dir: Path, output_dir: Path) -> None:
+    """Copy ``feature_encoders.json`` next to the model so inference can rebuild features."""
+    src = data_dir / ENCODERS_FILENAME
+    if src.exists():
+        output_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy(src, output_dir / ENCODERS_FILENAME)
+    else:
+        logger.warning(f"{src} not found — re-run the preprocessor so the API can accept raw patient inputs")
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +215,6 @@ def train_lightgbm(
         best_params["gpu_platform_id"] = 0
         best_params["gpu_device_id"] = 0
 
-    import lightgbm as lgb
     best_model = lgb.LGBMRegressor(**best_params)
     best_model.fit(
         X_train, y_train,
@@ -356,6 +410,7 @@ def save_model(
     params: dict[str, Any],
     metrics: dict[str, float],
     feature_names: list[str],
+    extras: dict[str, Any] | None = None,
 ) -> Path:
     """Save a trained model, its parameters, and metrics.
 
@@ -366,6 +421,7 @@ def save_model(
         params: Best hyperparameters.
         metrics: Validation metrics.
         feature_names: Feature column names used.
+        extras: Optional additional metadata (test metrics, residual quantiles).
 
     Returns:
         Path to the saved model file.
@@ -382,6 +438,7 @@ def save_model(
         "params": {k: str(v) if not isinstance(v, (int, float, bool, type(None))) else v
                    for k, v in params.items()},
         "metrics": metrics,
+        **(extras or {}),
         "feature_names": feature_names,
     }
     meta_path = output_dir / f"{model_name}_metadata.json"
@@ -438,7 +495,10 @@ def main() -> None:
     # Load data
     train_df = pd.read_parquet(args.data / "train.parquet")
     val_df = pd.read_parquet(args.data / "val.parquet")
+    test_path = args.data / "test.parquet"
+    test_df = pd.read_parquet(test_path) if test_path.exists() else None
     _, _, feature_names = _get_feature_target(train_df)
+    copy_feature_encoders(args.data, args.output)
 
     models_to_train = [args.model] if args.model != "all" else ["lightgbm", "xgboost", "elastic_net"]
 
@@ -460,8 +520,11 @@ def main() -> None:
         else:
             raise ValueError(f"Unknown model: {model_name}")
 
-        save_model(model, args.output, f"{model_name}_best", params, metrics, feature_names)
-        logger.info(f"{model_name} training complete. Validation MAE: {metrics['mae']:.4f}")
+        extras = compute_evaluation_extras(model, val_df, test_df)
+        save_model(model, args.output, f"{model_name}_best", params, metrics, feature_names, extras)
+        test_mae = extras.get("test_metrics", {}).get("mae", float("nan"))
+        logger.info(f"{model_name} training complete. Validation MAE: {metrics['mae']:.4f}, "
+                    f"Test MAE: {test_mae:.4f}")
 
 
 if __name__ == "__main__":

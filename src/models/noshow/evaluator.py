@@ -7,7 +7,6 @@ Reference: MASTER_PROMPT §7.2 Step 3, §12.2
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from src.models.noshow.predictor import NoShowPredictor
-from src.models.noshow.trainer import NOSHOW_FEATURES, _get_noshow_feature_target
+from src.models.noshow.trainer import _get_noshow_feature_target
 from src.utils.constants import (
     TARGET_NOSHOW_AUC_PR,
     TARGET_NOSHOW_AUC_ROC,
@@ -105,7 +104,6 @@ class NoShowEvaluator:
             List of saved file paths.
         """
         import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
         from sklearn.metrics import precision_recall_curve, roc_curve
 
         output_dir.mkdir(parents=True, exist_ok=True)

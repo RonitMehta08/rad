@@ -30,10 +30,10 @@ from src.utils.constants import (
 from src.utils.logger import get_logger
 from src.utils.metrics import compute_all_regression_metrics
 from src.utils.plotting import (
+    MODALITY_COLORS,
     apply_radqueue_theme,
     create_scatter_pred_vs_actual,
     save_figure,
-    MODALITY_COLORS,
 )
 
 logger = get_logger(__name__)

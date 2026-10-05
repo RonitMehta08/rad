@@ -17,14 +17,12 @@ from pathlib import Path
 from typing import Any
 
 import joblib
-import numpy as np
 import optuna
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.frozen import FrozenEstimator
-from sklearn.model_selection import StratifiedKFold
 
-from src.data.preprocessor import FEATURE_COLUMNS, NOSHOW_TARGET_COLUMN
+from src.data.preprocessor import NOSHOW_TARGET_COLUMN
 from src.utils.constants import RANDOM_SEED
 from src.utils.logger import get_logger
 from src.utils.metrics import compute_classification_metrics
@@ -48,9 +46,12 @@ NOSHOW_FEATURES: list[str] = [
     "is_weekend",
     "is_holiday",
     "is_monday",
-    "visit_type_encoded",
     "exam_complexity_encoded",
 ]
+
+# Only pre-booked (scheduled) appointments can be no-shows; walk-ins and
+# emergencies are present by definition and would make the task trivial.
+SCHEDULED_VISIT_CODE: int = 0  # visit_type_encoded for "scheduled"
 
 
 def _get_noshow_feature_target(
@@ -68,6 +69,9 @@ def _get_noshow_feature_target(
 
     if NOSHOW_TARGET_COLUMN not in df.columns:
         raise ValueError(f"Target column '{NOSHOW_TARGET_COLUMN}' not found in DataFrame")
+
+    if "visit_type_encoded" in df.columns:
+        df = df.loc[df["visit_type_encoded"] == SCHEDULED_VISIT_CODE]
 
     X = df[available].copy()
     y = df[NOSHOW_TARGET_COLUMN].copy()
@@ -213,14 +217,15 @@ def train_noshow_model(
         verbose=False,
     )
 
-    # Platt calibration (§7.2 Step 2)
+    # Platt calibration (§7.2 Step 2) — fitted on validation; judged on the test split later
     logger.info("Applying Platt calibration...")
     calibrator = CalibratedClassifierCV(FrozenEstimator(best_model), method="sigmoid", cv=5)
     calibrator.fit(X_val, y_val)
 
-    # Evaluate
+    # Choose the decision threshold that maximises F1 on validation, then report at it
     y_proba = calibrator.predict_proba(X_val)[:, 1]
-    val_metrics = compute_classification_metrics(y_val.values, y_proba)
+    decision_threshold = compute_classification_metrics(y_val.values, y_proba)["optimal_threshold"]
+    val_metrics = compute_classification_metrics(y_val.values, y_proba, threshold=decision_threshold)
     logger.info(f"No-show validation metrics: AUC-ROC={val_metrics['auc_roc']:.4f}, "
                 f"AUC-PR={val_metrics['auc_pr']:.4f}, F1={val_metrics['f1']:.4f}")
 
@@ -256,7 +261,21 @@ def main() -> None:
     joblib.dump(calibrator, args.output / "calibrator.pkl")
 
     # Save metadata
-    meta = {"params": {k: str(v) for k, v in params.items()}, "metrics": metrics}
+    meta: dict[str, Any] = {
+        "params": {k: str(v) for k, v in params.items()},
+        "decision_threshold": metrics["threshold_used"],
+        "training_population": "scheduled appointments only",
+        "metrics": metrics,
+    }
+    test_path = args.data / "test.parquet"
+    if test_path.exists():
+        X_test, y_test, _ = _get_noshow_feature_target(pd.read_parquet(test_path))
+        test_proba = calibrator.predict_proba(X_test)[:, 1]
+        meta["test_metrics"] = compute_classification_metrics(
+            y_test.values, test_proba, threshold=metrics["threshold_used"],
+        )
+        logger.info(f"No-show TEST metrics: AUC-ROC={meta['test_metrics']['auc_roc']:.4f}, "
+                    f"AUC-PR={meta['test_metrics']['auc_pr']:.4f}, F1={meta['test_metrics']['f1']:.4f}")
     with open(args.output / "noshow_metadata.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, default=str)
 

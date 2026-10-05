@@ -17,7 +17,7 @@ from typing import Any
 from src.scheduler.config import SchedulerConfig, load_scheduler_config
 from src.scheduler.dispatcher import RealTimeDispatcher
 from src.scheduler.models import Assignment, DepartmentState, PatientState, Resource
-from src.utils.constants import SERVICE_TIME_PARAMS, UrgencyLevel
+from src.utils.constants import OVERBOOKING_PROBABILITY_THRESHOLD, SERVICE_TIME_PARAMS, UrgencyLevel
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -204,8 +204,8 @@ class ReschedulingEngine:
             0.0, float(slot_patients_count - slot_capacity) / float(max(1, slot_capacity))
         )
 
-        # If probability of no-show is high (>= 35%) and overbooking rate is within fraction limit
-        return prob >= 0.35 and current_overbook_rate < max_overbook_frac
+        # Overbook only when no-show risk is high and the overbooking rate is within the safety limit
+        return prob >= OVERBOOKING_PROBABILITY_THRESHOLD and current_overbook_rate < max_overbook_frac
 
     def handle_equipment_failure(
         self,

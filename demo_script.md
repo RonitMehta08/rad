@@ -1,28 +1,32 @@
 # RadQueue AI - Demo Script
 
-**Duration:** 5-7 minutes
+**Duration:** 5-7 minutes. Start the dashboard first: `streamlit run dashboard/app.py`. Numbers below come from `reports/final_report.md` (Tier 1, 5 days × 10 seeded replications); rerun to refresh.
 
 ## Slide 1: Problem Statement (30 sec)
-"Indian radiology departments serve 150-250 patients daily with 2.5-3 hour average turnaround time. Traditional systems use First-Come-First-Served (FCFS), leading to high variance and long waits for critical patients. RadQueue AI predicts and optimizes this."
+"Indian radiology departments serve 150-250 patients a day, mostly walk-ins, on scarce MRI/CT capacity. Patients wait blind, and FCFS queues let emergencies wait behind routine scans."
 
 ## Slide 2: Architecture (45 sec)
-"Our system uses a hybrid closed-loop architecture. The Prediction Engine (LightGBM/XGBoost) predicts wait times, and the Scheduling Engine (RadQueue AI Policy) dynamically re-routes patients to minimize wait times based on live queuing data."
+"Prediction (LightGBM/XGBoost ensemble + SHAP) feeds a three-level scheduler (day-ahead MILP, real-time dispatch, event rescheduling). Both are validated in a SimPy digital twin of the department."
 
 ## Slide 3: Live Demo — Command Center (60 sec)
-*Action: Open `1_Command_Center.py`.*
-"Here is the real-time command center. You can see total patients, average wait times, and live resource utilization for X-Ray, CT, MRI, and Ultrasound. It alerts staff if emergency queues build up."
+*Open Command Center, drag the replay slider through the morning peak.*
+"This is a simulated Tier-1 day under RadQueue AI: live queues per modality, utilisation gauges and patient flow. Alerts flag MRI saturation and any emergency that waited over 10 minutes."
 
 ## Slide 4: Live Demo — Predict a Patient's Wait (60 sec)
-*Action: Open `2_Wait_Time_Predictor.py`.*
-"Let's enter a walk-in MRI patient. The model predicts a wait time of 45 minutes. The SHAP summary explains that the current MRI queue length and peak hour are the main drivers for this wait."
+*Wait Time Predictor: MRI, walk-in, queue of 6.*
+"The model predicts the wait with an honest 90% interval and explains why in plain language. Held-out test error is about 6.6 minutes, against 7-12 in the published literature."
 
-## Slide 5: Live Demo — What-If Scenario (60 sec)
-*Action: Open `4_What_If_Simulator.py`.*
-"What if we change our policy from FCFS to RadQueue AI? Let's run a simulation. As you can see, average wait time drops significantly, and the maximum wait time is capped due to our fairness constraint."
+## Slide 5: Live Demo — Smart Scheduler (45 sec)
+*Register three routine MRI patients, then an emergency.*
+"The emergency preempts the routine scan. The displaced patient keeps their place at the front of the queue, and every waiting patient gets an ETA."
 
-## Slide 6: Indian Context (45 sec)
-*Action: Open `7_Indian_Context.py`.*
-"Since we're building for India, we have specific modifiers for Tier 1 Govt Hospitals, walk-in ratios, monsoon emergencies, and local holidays like Diwali and Holi that drastically affect OPD traffic."
+## Slide 6: What-If (60 sec)
+*What-If Simulator → preset "Add 1 MRI machine".*
+"Same patients, one extra MRI: average wait drops about 44% and P90 about 30%. This is the evidence a hospital needs before buying equipment."
 
-## Slide 7: Conclusion
-"RadQueue AI moves radiology from static queuing to dynamic, predictive routing, directly reducing patient suffering and improving resource utilization."
+## Slide 7: Policy comparison & honesty (45 sec)
+*Policy comparison tab.*
+"On identical patient streams, RadQueue AI cuts emergency waits from about 34 minutes under FCFS to about 5 minutes. Average wait is unchanged and routine starvation is similar (11% vs 9% over 90 min), while SJF has the lowest average and P90 wait. Combining duration-awareness with fairness is our next scheduler improvement."
+
+## Slide 8: Indian Context & Future Scope (30 sec)
+"Tiers, holidays, monsoon and Monday surges are all configurable. Next steps: real RIS/PACS data, WhatsApp ETAs, and GPU-tuned models."

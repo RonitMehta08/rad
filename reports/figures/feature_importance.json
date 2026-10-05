@@ -1,77 +1,77 @@
 [
   {
-    "feature": "modality_target_enc",
-    "display_name": "modality_target_enc",
-    "mean_abs_shap": 11.2452
-  },
-  {
     "feature": "current_queue_length_same_modality",
     "display_name": "Queue length (same modality)",
-    "mean_abs_shap": 8.9919
-  },
-  {
-    "feature": "rolling_avg_wait_30min",
-    "display_name": "Avg wait time (last 30 min)",
-    "mean_abs_shap": 4.5655
-  },
-  {
-    "feature": "current_queue_length_total",
-    "display_name": "Total queue length",
-    "mean_abs_shap": 2.7756
-  },
-  {
-    "feature": "urgency_encoded",
-    "display_name": "Clinical urgency",
-    "mean_abs_shap": 2.7221
-  },
-  {
-    "feature": "modality_encoded",
-    "display_name": "Imaging modality",
-    "mean_abs_shap": 1.7445
-  },
-  {
-    "feature": "queue_length_change_last_15min",
-    "display_name": "Queue change (last 15 min)",
-    "mean_abs_shap": 1.4813
-  },
-  {
-    "feature": "minutes_since_department_opened",
-    "display_name": "Time since dept opened",
-    "mean_abs_shap": 0.9123
-  },
-  {
-    "feature": "congestion_indicator",
-    "display_name": "Congestion level",
-    "mean_abs_shap": 0.5845
-  },
-  {
-    "feature": "rolling_avg_wait_1hr",
-    "display_name": "Avg wait time (last 1 hour)",
-    "mean_abs_shap": 0.4542
-  },
-  {
-    "feature": "wait_time_last_served_patient",
-    "display_name": "Last patient's wait time",
-    "mean_abs_shap": 0.4056
+    "mean_abs_shap": 10.1404
   },
   {
     "feature": "num_machines_available",
     "display_name": "Available machines",
-    "mean_abs_shap": 0.4028
+    "mean_abs_shap": 9.3504
   },
   {
-    "feature": "wait_time_last_3_avg",
-    "display_name": "Avg wait (last 3 patients)",
-    "mean_abs_shap": 0.37
+    "feature": "modality_target_enc",
+    "display_name": "Typical wait for this modality",
+    "mean_abs_shap": 4.6629
+  },
+  {
+    "feature": "current_queue_length_total",
+    "display_name": "Total queue length",
+    "mean_abs_shap": 3.8865
+  },
+  {
+    "feature": "urgency_encoded",
+    "display_name": "Clinical urgency",
+    "mean_abs_shap": 3.3667
+  },
+  {
+    "feature": "modality_encoded",
+    "display_name": "Imaging modality",
+    "mean_abs_shap": 1.5614
+  },
+  {
+    "feature": "arrival_rate_last_15min",
+    "display_name": "Recent arrival rate",
+    "mean_abs_shap": 1.3182
+  },
+  {
+    "feature": "queue_length_change_last_15min",
+    "display_name": "Queue change (last 15 min)",
+    "mean_abs_shap": 1.0263
+  },
+  {
+    "feature": "minutes_since_department_opened",
+    "display_name": "Time since dept opened",
+    "mean_abs_shap": 0.9848
+  },
+  {
+    "feature": "rolling_avg_wait_1hr",
+    "display_name": "Avg wait time (last 1 hour)",
+    "mean_abs_shap": 0.4859
+  },
+  {
+    "feature": "wait_time_last_served_patient",
+    "display_name": "Last patient's wait time",
+    "mean_abs_shap": 0.3556
+  },
+  {
+    "feature": "congestion_indicator",
+    "display_name": "Congestion level",
+    "mean_abs_shap": 0.3148
   },
   {
     "feature": "estimated_remaining_service_minutes",
     "display_name": "Est. remaining service time",
-    "mean_abs_shap": 0.3155
+    "mean_abs_shap": 0.3139
+  },
+  {
+    "feature": "rolling_avg_wait_30min",
+    "display_name": "Avg wait time (last 30 min)",
+    "mean_abs_shap": 0.2412
   },
   {
     "feature": "requires_prep",
     "display_name": "Patient preparation required",
-    "mean_abs_shap": 0.306
+    "mean_abs_shap": 0.2343
   }
 ]
