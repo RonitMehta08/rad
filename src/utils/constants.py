@@ -9,7 +9,6 @@ Consumers: P2, P3, P4, P5
 
 from enum import Enum
 
-
 # ---------------------------------------------------------------------------
 # Domain Enums
 # ---------------------------------------------------------------------------
@@ -135,6 +134,9 @@ EMERGENCY_BUFFER_FRACTION: float = 0.10  # Reserve 10% capacity for emergencies
 MAX_WAIT_ROUTINE_MINUTES: int = 90
 MAX_WAIT_URGENT_MINUTES: int = 30
 MAX_WAIT_EMERGENCY_MINUTES: int = 10
+
+# Book a wait-listed standby patient when an appointment's no-show risk is at least this
+OVERBOOKING_PROBABILITY_THRESHOLD: float = 0.30
 
 # ---------------------------------------------------------------------------
 # Operational Constants

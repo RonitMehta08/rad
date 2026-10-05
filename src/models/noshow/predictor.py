@@ -15,10 +15,14 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from src.data.feature_builder import build_feature_frame
 from src.models.noshow.trainer import NOSHOW_FEATURES
+from src.utils.constants import OVERBOOKING_PROBABILITY_THRESHOLD
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+DEFAULT_DECISION_THRESHOLD: float = 0.5
 
 
 class NoShowPredictor:
@@ -69,6 +73,15 @@ class NoShowPredictor:
 
         self.feature_names = NOSHOW_FEATURES
 
+        # Decision threshold tuned on validation by the trainer
+        meta_path = model_path.parent / "noshow_metadata.json"
+        self.decision_threshold = DEFAULT_DECISION_THRESHOLD
+        if meta_path.exists():
+            with open(meta_path, encoding="utf-8") as f:
+                self.decision_threshold = float(
+                    json.load(f).get("decision_threshold", DEFAULT_DECISION_THRESHOLD)
+                )
+
     def _prepare_features(self, features: dict[str, Any] | pd.DataFrame) -> pd.DataFrame:
         """Align input features to expected columns.
 
@@ -79,6 +92,9 @@ class NoShowPredictor:
             Aligned single-row DataFrame.
         """
         if isinstance(features, dict):
+            if not all(col in features for col in self.feature_names):
+                # Raw patient description -> same feature encoding as training
+                return build_feature_frame(features)[self.feature_names]
             df = pd.DataFrame([features])
         else:
             df = features.copy()
@@ -129,7 +145,7 @@ class NoShowPredictor:
     def should_overbook(
         self,
         features: dict[str, Any] | pd.DataFrame,
-        threshold: float = 0.5,
+        threshold: float | None = None,
         max_overbooking_fraction: float = 0.15,
         current_overbooking_rate: float = 0.0,
     ) -> dict[str, Any]:
@@ -137,7 +153,10 @@ class NoShowPredictor:
 
         Args:
             features: Patient features.
-            threshold: Probability threshold above which overbooking is triggered.
+            threshold: Probability threshold above which overbooking is triggered
+                (defaults to OVERBOOKING_PROBABILITY_THRESHOLD; the F1-optimal
+                ``decision_threshold`` is for classification reporting and is too
+                low for safe overbooking).
             max_overbooking_fraction: Safety limit on total overbooking.
             current_overbooking_rate: Current overbooking level.
 
@@ -145,6 +164,7 @@ class NoShowPredictor:
             Dict with keys: no_show_probability, should_overbook,
             overbooking_blocked_by_safety, reason.
         """
+        threshold = OVERBOOKING_PROBABILITY_THRESHOLD if threshold is None else threshold
         prob = self.predict_probability(features)
         over_threshold = prob >= threshold
         within_safety = current_overbooking_rate < max_overbooking_fraction

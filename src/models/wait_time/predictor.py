@@ -15,11 +15,24 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from src.data.preprocessor import FEATURE_COLUMNS, TARGET_COLUMN
+from src.data.feature_builder import build_feature_frame
+from src.data.preprocessor import ENCODERS_FILENAME, FEATURE_COLUMNS
 from src.models.wait_time.ensemble import StackingEnsemble  # noqa: F401 — needed for joblib.load
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Fallback relative margin when no residual quantiles were saved with the model.
+FALLBACK_INTERVAL_FRACTION: float = 0.20
+DEFAULT_CONFIDENCE_LEVEL: float = 0.90
+
+
+def load_json_if_exists(path: Path) -> dict[str, Any] | None:
+    """Load a JSON file, returning None if it does not exist."""
+    if not path.exists():
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 # ---------------------------------------------------------------------------
 # Predictor Class
@@ -82,6 +95,23 @@ class WaitTimePredictor:
             logger.warning(f"feature_names.json not found at {feature_names_path}, using defaults")
             self.feature_names = FEATURE_COLUMNS
 
+        # Encoders let us accept raw patient descriptions (see src.data.feature_builder)
+        self.encoders = load_json_if_exists(model_path.parent / ENCODERS_FILENAME)
+        if self.encoders is None:
+            logger.warning(
+                f"{ENCODERS_FILENAME} not found next to {model_path}; raw inputs will use "
+                "untrained defaults. Re-run the preprocessor + trainer to create it."
+            )
+
+        # Empirical validation residual quantiles -> honest prediction intervals
+        metadata = (
+            load_json_if_exists(model_path.parent / f"{self.model_name}_metadata.json")
+            or load_json_if_exists(model_path.with_suffix(".json"))
+            or {}
+        )
+        self.metadata = metadata
+        self.residual_quantiles: dict[str, float] = metadata.get("residual_quantiles", {})
+
     def _prepare_features(self, patient_features: dict[str, Any] | pd.DataFrame) -> pd.DataFrame:
         """Align input features to the model's expected columns.
 
@@ -92,6 +122,10 @@ class WaitTimePredictor:
             Single-row DataFrame with columns matching self.feature_names.
         """
         if isinstance(patient_features, dict):
+            is_engineered = all(col in patient_features for col in self.feature_names)
+            if not is_engineered:
+                # Raw patient description (e.g. from API, dashboard or dispatcher)
+                return build_feature_frame(patient_features, self.encoders)[self.feature_names]
             df = pd.DataFrame([patient_features])
         else:
             df = patient_features.copy()
@@ -108,6 +142,10 @@ class WaitTimePredictor:
         df = df.fillna(0)
 
         return df
+
+    def prepare_features(self, patient_features: dict[str, Any] | pd.DataFrame) -> pd.DataFrame:
+        """Public alias: the exact model-ready feature row used for prediction."""
+        return self._prepare_features(patient_features)
 
     def predict(self, patient_features: dict[str, Any] | pd.DataFrame) -> float:
         """Predict wait time in minutes for a single patient.
@@ -151,30 +189,37 @@ class WaitTimePredictor:
     def predict_with_confidence(
         self,
         patient_features: dict[str, Any] | pd.DataFrame,
-        confidence_level: float = 0.90,
+        confidence_level: float = DEFAULT_CONFIDENCE_LEVEL,
     ) -> dict[str, float]:
-        """Predict wait time with a pseudo-confidence interval.
+        """Predict wait time with an empirical prediction interval.
 
-        Uses the model's prediction ± a percentage-based margin as a
-        simple confidence interval proxy (tree models don't natively
-        produce prediction intervals).
+        The interval adds the 5th/95th percentiles of validation residuals
+        (actual - predicted) saved by the trainer. If those are missing it falls
+        back to a +/-20% heuristic and says so via ``interval_method``.
 
         Args:
-            patient_features: Input features.
-            confidence_level: Desired confidence level (0.0-1.0).
+            patient_features: Input features (raw or engineered).
+            confidence_level: Nominal coverage; only 0.90 is calibrated.
 
         Returns:
-            Dict with keys: predicted, lower_bound, upper_bound.
+            Dict with keys: predicted, lower_bound, upper_bound, confidence_level,
+            interval_method.
         """
         pred = self.predict(patient_features)
 
-        # Heuristic: ±20% for 90% CI, scale proportionally
-        margin_fraction = 0.20 * (confidence_level / 0.90)
-        margin = pred * margin_fraction
+        if "q05" in self.residual_quantiles and "q95" in self.residual_quantiles:
+            lower = pred + self.residual_quantiles["q05"]
+            upper = pred + self.residual_quantiles["q95"]
+            method = "validation_residual_quantiles"
+        else:
+            margin = pred * FALLBACK_INTERVAL_FRACTION * (confidence_level / DEFAULT_CONFIDENCE_LEVEL)
+            lower, upper = pred - margin, pred + margin
+            method = "heuristic_pct"
 
         return {
             "predicted": pred,
-            "lower_bound": max(0.0, round(pred - margin, 1)),
-            "upper_bound": round(pred + margin, 1),
+            "lower_bound": max(0.0, round(lower, 1)),
+            "upper_bound": round(max(upper, pred), 1),
             "confidence_level": confidence_level,
+            "interval_method": method,
         }

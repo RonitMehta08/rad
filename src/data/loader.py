@@ -8,7 +8,6 @@ Reference: MASTER_PROMPT §6.1 Datasets 2-4
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 

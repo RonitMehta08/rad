@@ -1,0 +1,66 @@
+{
+  "target_encodings": {
+    "modality_target_enc": {
+      "ct": 44.88454839399999,
+      "mri": 107.70019786009942,
+      "ultrasound": 25.54958207791903,
+      "xray": 23.931565454681202
+    },
+    "shift_type_target_enc": {
+      "afternoon": 32.809935822204686,
+      "morning": 36.5163545151553
+    },
+    "exam_complexity_target_enc": {
+      "complex": 36.11334909733508,
+      "moderate": 34.277989722881,
+      "simple": 34.64266154905268
+    }
+  },
+  "global_mean": 34.73304158279739,
+  "feature_medians": {
+    "modality_encoded": 1.0,
+    "visit_type_encoded": 1.0,
+    "urgency_encoded": 0.0,
+    "exam_complexity_encoded": 0.0,
+    "gender_encoded": 0.0,
+    "age_group_encoded": 2.0,
+    "insurance_type_encoded": 1.0,
+    "shift_type_encoded": 0.0,
+    "distance_category_encoded": 0.0,
+    "weather_category_encoded": 0.0,
+    "requires_contrast": 0.0,
+    "requires_prep": 0.0,
+    "is_weekend": 0.0,
+    "is_holiday": 0.0,
+    "is_monday": 0.0,
+    "equipment_under_maintenance": 0.0,
+    "is_repeat_patient": 1.0,
+    "current_queue_length_total": 10.0,
+    "current_queue_length_same_modality": 2.0,
+    "patients_in_service_count": 2.0,
+    "avg_service_time_last_5_patients": 11.929640194050538,
+    "time_since_last_patient_served_minutes": 0.0,
+    "emergency_patients_in_queue": 1.0,
+    "num_machines_available": 2.0,
+    "num_technologists_on_duty": 8.0,
+    "num_radiologists_on_duty": 4.0,
+    "previous_no_show_count": 0.0,
+    "appointment_lead_time_days": 0.0,
+    "previous_appointment_count": 2.0,
+    "minutes_since_department_opened": 358.0,
+    "hour_of_day_sin": -0.2588190451025208,
+    "hour_of_day_cos": -0.7071067811865479,
+    "day_of_week_sin": 0.0,
+    "day_of_week_cos": -0.22252093395631434,
+    "rolling_avg_wait_1hr": 29.685714285714702,
+    "rolling_avg_wait_30min": 37.375,
+    "arrival_rate_last_15min": 0.7333333333333333,
+    "wait_time_last_served_patient": 34.4,
+    "wait_time_last_3_avg": 36.54999999998836,
+    "queue_length_change_last_15min": 1.0,
+    "utilization_rate": 1.0,
+    "congestion_indicator": 7.666666666666666,
+    "visit_queue_interaction": 7.0,
+    "estimated_remaining_service_minutes": 12.968597626426106
+  }
+}

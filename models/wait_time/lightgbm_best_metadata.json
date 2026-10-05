@@ -6,22 +6,34 @@
     "verbosity": -1,
     "n_estimators": 5000,
     "random_state": 42,
-    "num_leaves": 79,
-    "learning_rate": 0.013936122700170328,
-    "min_child_samples": 45,
-    "feature_fraction": 0.8340670347397532,
-    "bagging_fraction": 0.864113495902363,
-    "bagging_freq": 7,
-    "reg_alpha": 9.033833114417426,
-    "reg_lambda": 8.232332151440183
+    "num_leaves": 109,
+    "learning_rate": 0.038645087432553925,
+    "min_child_samples": 21,
+    "feature_fraction": 0.8479058872101981,
+    "bagging_fraction": 0.7980953210276587,
+    "bagging_freq": 2,
+    "reg_alpha": 2.5853488253346177,
+    "reg_lambda": 2.702342692454241
   },
   "metrics": {
-    "mae": 6.579185209014279,
-    "rmse": 11.315575228792136,
-    "r_squared": 0.8784433845813489,
-    "mape": 25.10142935444888,
-    "median_ae": 4.161966919457905,
-    "p90_ae": 13.755831695995523
+    "mae": 6.9195906400105756,
+    "rmse": 13.022346165986738,
+    "r_squared": 0.8502988061312662,
+    "mape": 26.845210233273782,
+    "median_ae": 4.073205128382465,
+    "p90_ae": 13.55082446004014
+  },
+  "residual_quantiles": {
+    "q05": -14.091118136050497,
+    "q95": 12.67592111255621
+  },
+  "test_metrics": {
+    "mae": 6.56476061104393,
+    "rmse": 12.402586559829105,
+    "r_squared": 0.8144555416137,
+    "mape": 30.80162455294942,
+    "median_ae": 3.8372159992240507,
+    "p90_ae": 12.886721569644354
   },
   "feature_names": [
     "modality_encoded",

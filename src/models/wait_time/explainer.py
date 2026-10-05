@@ -35,6 +35,9 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 FEATURE_DISPLAY_NAMES: dict[str, str] = {
+    "modality_target_enc": "Typical wait for this modality",
+    "shift_type_target_enc": "Typical wait for this shift",
+    "exam_complexity_target_enc": "Typical wait for this exam complexity",
     "current_queue_length_total": "Total queue length",
     "current_queue_length_same_modality": "Queue length (same modality)",
     "patients_in_service_count": "Patients currently being served",

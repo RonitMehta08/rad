@@ -15,7 +15,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import math
 import random
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -33,18 +32,19 @@ from src.data.indian_context import (
     get_weather_category,
 )
 from src.utils.constants import (
-    AgeGroup,
-    DistanceCategory,
-    ExamComplexity,
-    InsuranceType,
-    ModalityType,
     ShiftType,
-    UrgencyLevel,
-    VisitType,
 )
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# No-show model parameters not covered by simulation_config.yaml
+NOSHOW_HISTORY_EFFECT_PER_MISS: float = 0.30  # +30% relative risk per previous no-show
+NOSHOW_DISTANCE_EFFECT: dict[str, float] = {"local": 0.9, "city": 1.0, "outstation": 1.4}
+MAX_NOSHOW_PROBABILITY: float = 0.90
+MODALITY_RESOURCE_KEYS: dict[str, str] = {
+    "xray": "xray_rooms", "ct": "ct_scanners", "mri": "mri_machines", "ultrasound": "us_rooms",
+}
 
 # ---------------------------------------------------------------------------
 # Configuration Loader
@@ -89,6 +89,46 @@ def _sample_normal_positive(mean: float, std: float, min_val: float = 0.5) -> fl
 def _weighted_choice(options: list[str], weights: list[float]) -> str:
     """Weighted random choice."""
     return random.choices(options, weights=weights, k=1)[0]
+
+
+# ---------------------------------------------------------------------------
+# No-Show Model (shared with the SimPy digital twin)
+# ---------------------------------------------------------------------------
+
+
+def compute_noshow_probability(
+    base_rate: float,
+    noshow_cfg: dict[str, Any],
+    attrs: dict[str, Any],
+    day_dt: datetime,
+    lead_time: int,
+) -> float:
+    """No-show probability for a scheduled appointment.
+
+    p = base_rate x lead_time_effect x monsoon x monday x history x distance,
+    clipped to MAX_NOSHOW_PROBABILITY. Multipliers come from the ``noshow``
+    section of simulation_config.yaml.
+
+    Args:
+        base_rate: Hospital-tier no-show rate.
+        noshow_cfg: ``noshow`` section of the simulation config.
+        attrs: Patient attributes (previous_no_show_count, distance_category).
+        day_dt: Appointment date.
+        lead_time: Days between booking and appointment.
+
+    Returns:
+        Probability in [0, MAX_NOSHOW_PROBABILITY].
+    """
+    lead_effects = {int(k): float(v) for k, v in noshow_cfg.get("lead_time_effect", {}).items()}
+    eligible = [k for k in lead_effects if k <= lead_time]
+    mult = lead_effects[max(eligible)] if eligible else 1.0
+    if get_weather_category(day_dt.date() if isinstance(day_dt, datetime) else day_dt).value == "monsoon":
+        mult *= noshow_cfg.get("monsoon_multiplier", 1.0)
+    if day_dt.weekday() == 0:
+        mult *= noshow_cfg.get("monday_multiplier", 1.0)
+    mult *= 1.0 + NOSHOW_HISTORY_EFFECT_PER_MISS * attrs.get("previous_no_show_count", 0)
+    mult *= NOSHOW_DISTANCE_EFFECT.get(attrs.get("distance_category", "local"), 1.0)
+    return min(MAX_NOSHOW_PROBABILITY, base_rate * mult)
 
 
 # ---------------------------------------------------------------------------
@@ -256,9 +296,8 @@ class RadiologyDepartmentGenerator:
             "avg_service_time_last_5_patients": queue_state["avg_service_last_5"],
             "time_since_last_patient_served_minutes": queue_state["time_since_last_served"],
             "emergency_patients_in_queue": queue_state["emergency_in_queue"],
-            "num_machines_available": self.hospital_config.get("resources", {}).get(f"{modality}_rooms",
-                                     self.hospital_config.get("resources", {}).get(f"{modality}_scanners",
-                                     self.hospital_config.get("resources", {}).get(f"{modality}_machines", 1))),
+            "num_machines_available": self.hospital_config.get("resources", {}).get(
+                MODALITY_RESOURCE_KEYS[modality], 1),
             "num_technologists_on_duty": self.hospital_config.get("staff", {}).get("technologists", 5),
             "num_radiologists_on_duty": self.hospital_config.get("staff", {}).get("radiologists", 2),
         }
@@ -370,54 +409,48 @@ class RadiologyDepartmentGenerator:
 
         self.records.append(record)
 
-    def _generate_noshow_records(
+    def _noshow_probability(self, attrs: dict[str, Any], day_dt: datetime, lead_time: int) -> float:
+        """No-show probability for a scheduled appointment (see ``compute_noshow_probability``)."""
+        cfg = self.sim_config.get("noshow", {})
+        base = self.hospital_config.get("noshow_rate", cfg.get("base_rate", 0.20))
+        return compute_noshow_probability(base, cfg, attrs, day_dt, lead_time)
+
+    def _record_noshow(
         self,
-        day_date: datetime,
-        n_scheduled: int,
-        noshow_rate: float,
+        patient_id: str,
+        attrs: dict[str, Any],
+        appointment_dt: datetime,
+        queue_state: dict[str, Any],
     ) -> None:
-        """Generate no-show records for scheduled patients who didn't arrive."""
-        n_noshows = int(n_scheduled * noshow_rate)
-
-        for _ in range(n_noshows):
-            self._patient_counter += 1
-            patient_id = f"P-{self._patient_counter:05d}"
-            attrs = self._sample_patient_attributes(day_date)
-
-            # Scheduled patients who no-showed
-            lead_time = random.choice([1, 2, 3, 5, 7, 14])
-            hour = random.choice(range(8, 18))
-
-            record: dict[str, Any] = {
-                "patient_id": patient_id,
-                **attrs,
-                "visit_type": "scheduled",
-                "urgency": "routine",
-                "appointment_lead_time_days": lead_time,
-                "registration_time": day_date.replace(hour=hour, minute=random.randint(0, 59)),
-                "showed_up": False,
-                "actual_wait_time_minutes": None,
-                # Fill queue state with reasonable defaults
-                "current_queue_length_total": random.randint(5, 30),
-                "current_queue_length_same_modality": random.randint(1, 10),
-                "patients_in_service_count": random.randint(2, 8),
-                "avg_service_time_last_5_patients": random.uniform(5, 25),
-                "time_since_last_patient_served_minutes": random.uniform(0, 15),
-                "emergency_patients_in_queue": random.randint(0, 3),
-                "num_machines_available": random.randint(1, 3),
-                "num_technologists_on_duty": self.hospital_config.get("staff", {}).get("technologists", 5),
-                "num_radiologists_on_duty": self.hospital_config.get("staff", {}).get("radiologists", 2),
-                "equipment_under_maintenance": random.random() < 0.05,
-                "shift_type": self._get_shift(hour).value,
-                "hour_of_day": hour,
-                "day_of_week": day_date.weekday(),
-                "is_weekend": day_date.weekday() >= 5,
-                "is_holiday": generate_holiday_features(day_date.date())["is_holiday"],
-                "is_monday": day_date.weekday() == 0,
-                "minutes_since_department_opened": max(0, (hour - 8) * 60),
-                "weather_category": get_weather_category(day_date.date()).value,
-            }
-            self.records.append(record)
+        """Record a scheduled patient who did not arrive, with the real queue state at that time."""
+        modality = attrs["modality"]
+        hour = appointment_dt.hour
+        resources = self.hospital_config.get("resources", {})
+        self.records.append({
+            "patient_id": patient_id,
+            **attrs,
+            "current_queue_length_total": queue_state["total_in_queue"],
+            "current_queue_length_same_modality": queue_state["modality_queues"].get(modality, 0),
+            "patients_in_service_count": queue_state["in_service"],
+            "avg_service_time_last_5_patients": queue_state["avg_service_last_5"],
+            "time_since_last_patient_served_minutes": queue_state["time_since_last_served"],
+            "emergency_patients_in_queue": queue_state["emergency_in_queue"],
+            "num_machines_available": resources.get(MODALITY_RESOURCE_KEYS[modality], 1),
+            "num_technologists_on_duty": self.hospital_config.get("staff", {}).get("technologists", 5),
+            "num_radiologists_on_duty": self.hospital_config.get("staff", {}).get("radiologists", 2),
+            "equipment_under_maintenance": False,
+            "shift_type": self._get_shift(hour).value,
+            "hour_of_day": hour,
+            "day_of_week": appointment_dt.weekday(),
+            "is_weekend": appointment_dt.weekday() >= 5,
+            "is_holiday": generate_holiday_features(appointment_dt.date())["is_holiday"],
+            "is_monday": appointment_dt.weekday() == 0,
+            "minutes_since_department_opened": max(0, (hour - 8) * 60 + appointment_dt.minute),
+            "weather_category": get_weather_category(appointment_dt.date()).value,
+            "registration_time": appointment_dt,
+            "showed_up": False,
+            "actual_wait_time_minutes": None,
+        })
 
     def generate(self, n_days: int = 180, start_date: datetime | None = None) -> pd.DataFrame:
         """Run the full simulation and return a DataFrame of patient records.
@@ -439,7 +472,6 @@ class RadiologyDepartmentGenerator:
         daily_volume = self.hospital_config.get("daily_patient_volume", 200)
         walk_in_ratio = self.hospital_config.get("walk_in_ratio", 0.70)
         emergency_ratio = self.hospital_config.get("emergency_ratio", 0.10)
-        noshow_rate = self.hospital_config.get("noshow_rate", 0.20)
         operating_hours = 12  # 8 AM to 8 PM
 
         hourly_mults = self.arrival_config.get("hourly_multipliers", {})
@@ -535,16 +567,20 @@ class RadiologyDepartmentGenerator:
 
                         yield env.timeout(max(0, arrival_time - env.now))
 
+                        if visit_type == "scheduled" and random.random() < self._noshow_probability(
+                            attrs, day_dt, lead_time,
+                        ):
+                            self._record_noshow(
+                                patient_id, attrs, day_dt + timedelta(minutes=env.now), queue_state,
+                            )
+                            continue
+
                         env.process(self._patient_process(
                             env, patient_id, attrs, resources, day_dt, queue_state,
                         ))
 
             env.process(_arrival_generator(env, day_date, base_rate))
             env.run(until=operating_hours * 60 + 120)  # run 2 extra hours for stragglers
-
-            # Generate no-show records
-            n_scheduled = int(adj_volume * (1 - walk_in_ratio - emergency_ratio))
-            self._generate_noshow_records(day_date, n_scheduled, noshow_rate)
 
             if (day + 1) % 30 == 0:
                 logger.info(f"Day {day + 1}/{n_days} complete. Records so far: {len(self.records)}")

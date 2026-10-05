@@ -1,27 +1,48 @@
-"""Prediction endpoints.
+"""Prediction endpoints: wait time (with SHAP) and no-show risk.
 
-Owner: P5
+Owner: P5 (Dashboard & API)
 """
-from fastapi import APIRouter
-from src.api.schemas import PredictWaitTimeRequest, PredictWaitTimeResponse
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends
+from fastapi.concurrency import run_in_threadpool
+
+from src.api.dependencies import get_registry
+from src.api.schemas import (
+    PredictNoShowRequest,
+    PredictNoShowResponse,
+    PredictWaitTimeRequest,
+    PredictWaitTimeResponse,
+)
+from src.services.model_registry import ModelRegistry
+from src.services.prediction_service import predict_noshow, predict_wait_time
 
 router = APIRouter(prefix="/predict", tags=["Prediction"])
 
+
 @router.post("/wait-time", response_model=PredictWaitTimeResponse)
-async def predict_wait_time(request: PredictWaitTimeRequest):
-    # Dummy implementation since we don't have the full ML models loaded here yet
-    # In reality, this would load models/wait_time/ensemble_best.pkl and run inference
-    
-    # Simple dummy logic
-    wait_time = 45.0
-    if request.urgency.value == "emergency":
-        wait_time = 5.0
-    elif request.modality.value == "mri":
-        wait_time = 90.0
-        
-    return PredictWaitTimeResponse(
-        patient_id=request.patient_id,
-        predicted_wait_minutes=wait_time,
-        confidence_interval=(wait_time * 0.8, wait_time * 1.2),
-        shap_summary=f"Key drivers: Modality {request.modality.value} (+{wait_time/2} min), Urgency {request.urgency.value}."
-    )
+async def predict_wait_time_endpoint(
+    request: PredictWaitTimeRequest,
+    registry: ModelRegistry = Depends(get_registry),
+) -> PredictWaitTimeResponse:
+    """Predict a patient's wait (minutes) with an empirical 90% interval and SHAP explanation."""
+    raw = {
+        **request.patient.model_dump(mode="json", exclude={"patient_id"}),
+        **request.context.model_dump(mode="json", exclude_none=True),
+    }
+    result = await run_in_threadpool(predict_wait_time, registry, raw, request.explain)
+    return PredictWaitTimeResponse(patient_id=request.patient.patient_id, **result)
+
+
+@router.post("/no-show", response_model=PredictNoShowResponse)
+async def predict_noshow_endpoint(
+    request: PredictNoShowRequest,
+    registry: ModelRegistry = Depends(get_registry),
+) -> PredictNoShowResponse:
+    """No-show probability for a scheduled appointment and an overbooking recommendation."""
+    raw = request.patient.model_dump(mode="json", exclude={"patient_id"})
+    if request.timestamp is not None:
+        raw["timestamp"] = request.timestamp.isoformat()
+    result = await run_in_threadpool(predict_noshow, registry, raw)
+    return PredictNoShowResponse(patient_id=request.patient.patient_id, **result)

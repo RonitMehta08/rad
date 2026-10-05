@@ -21,7 +21,12 @@ from typing import Any
 from src.scheduler.config import SchedulerConfig, load_scheduler_config
 from src.scheduler.fairness import FairnessEngine
 from src.scheduler.models import DepartmentState, PatientState
-from src.utils.constants import URGENCY_WEIGHTS, ModalityType, UrgencyLevel
+from src.utils.constants import (
+    OVERBOOKING_PROBABILITY_THRESHOLD,
+    URGENCY_WEIGHTS,
+    ModalityType,
+    UrgencyLevel,
+)
 
 
 class BaseSchedulingPolicy(ABC):
@@ -199,18 +204,29 @@ class RadQueueAIPolicy(BaseSchedulingPolicy):
     ) -> list[PatientState]:
         candidates = [p for p in queue if modality is None or p.modality == modality]
 
-        def sort_key(p: PatientState) -> tuple[float, float, str]:
+        def sort_key(p: PatientState) -> tuple[int, float, float, str]:
+            # Emergencies form a strict top tier: no fairness bonus may push a
+            # non-emergency patient ahead of one (max emergency wait <= 10 min).
+            emergency_tier = 0 if p.urgency == UrgencyLevel.EMERGENCY else 1
             score = self.compute_score(p, state)
-            return (-score, p.arrival_time_minutes, p.patient_id)
+            return (emergency_tier, -score, p.arrival_time_minutes, p.patient_id)
 
         return sorted(candidates, key=sort_key)
 
 
 class RadQueueNoShowPolicy(RadQueueAIPolicy):
-    """RadQueue AI Dynamic Policy with no-show risk awareness."""
+    """RadQueue AI Dynamic Policy with no-show-aware controlled overbooking.
+
+    Queue ordering is identical to RadQueue AI. The difference is upstream:
+    when ``overbooking_enabled`` is True, the simulation (and live scheduler)
+    books an additional wait-listed patient into appointment slots whose
+    predicted no-show probability exceeds ``overbooking_threshold``.
+    """
 
     name: str = "radqueue_noshow"
     description: str = "RadQueue dynamic dispatch + no-show overbooking prioritization"
+    overbooking_enabled: bool = True
+    overbooking_threshold: float = OVERBOOKING_PROBABILITY_THRESHOLD
 
 
 def get_policy(policy_name: str, **kwargs: Any) -> BaseSchedulingPolicy:

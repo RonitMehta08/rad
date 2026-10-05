@@ -7,7 +7,7 @@ Reference: MASTER_PROMPT §6.3
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +19,7 @@ from src.utils.constants import WeatherCategory
 # Config Loading
 # ---------------------------------------------------------------------------
 
-_CONFIG_DIR = Path("config")
+_CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"  # independent of the working directory
 _HOLIDAYS_CONFIG: dict[str, Any] | None = None
 
 
